@@ -1,0 +1,14 @@
+{
+  "name": "@property/web", "version": "0.1.0", "private": true, "type": "module",
+  "scripts": {
+    "dev": "node scripts/next.mjs dev",
+    "build": "node scripts/next.mjs build",
+    "start": "node scripts/next.mjs start",
+    "typecheck": "node scripts/next.mjs typegen && tsc --noEmit"
+  },
+  "dependencies": {
+    "@property/domain": "*", "@property/services": "*", "@property/database": "*", "@property/infrastructure": "*",
+    "next": "16.3.5", "react": "^19.2.0", "react-dom": "^19.2.0", "better-auth": "1.7.5", "server-only": "^0.0.1",
+    "tailwindcss": "^4.1.0", "@tailwindcss/postcss": "^4.1.0", "postcss": "^8.5.6", "zod": "4.6.5"
+  }
+}
