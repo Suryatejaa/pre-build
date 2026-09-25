@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { PropertyType } from './property-type';
 import { idSchema } from './project';
 import { propertyRequirementsSchema, requirementConflictSchema, type PropertyRequirements, type RequirementCompletenessItem } from './requirements';
 
@@ -61,6 +62,8 @@ export interface AiRequestRecord {
 export interface RequirementsInterviewView {
   projectId: string;
   projectRevision: number;
+  propertyType: PropertyType;
+  propertyTypeMismatch: { approved: boolean; draft: boolean };
   versionId: string;
   status: InterviewStatus;
   siteContext: {

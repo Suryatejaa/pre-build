@@ -119,7 +119,7 @@ describe('snapshot evolution and attachment contracts',()=>{
   it('normalizes V1 only in memory, retains V1 parsing and rejects unsupported versions',()=>{
     const v1={schemaVersion:1,projectId:randomUUID(),name:'Old project',propertyType:'RESIDENTIAL_HOUSE',status:'ACTIVE'};
     const before=JSON.stringify(v1);
-    expect(normalizeProjectSnapshot(v1)).toEqual({...v1,schemaVersion:2,site:null});
+    expect(normalizeProjectSnapshot(v1)).toEqual({...v1,propertyType:'RESIDENTIAL',schemaVersion:2,site:null});
     expect(JSON.stringify(v1)).toBe(before);
     expect(projectSnapshotSchema.parse(v1)).toEqual(v1);
     expect(projectSnapshotSchema.safeParse({...v1,schemaVersion:3}).success).toBe(false);

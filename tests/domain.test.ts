@@ -4,8 +4,8 @@ import { assignMemberSchema, can, createProjectSchema, projectSnapshotSchema, re
 
 describe('canonical project validation', () => {
   it('normalizes names and limits the supported property scope', () => {
-    expect(createProjectSchema.parse({ name: '  Our home  ' })).toEqual({ name: 'Our home', propertyType: 'RESIDENTIAL_HOUSE' });
-    expect(createProjectSchema.safeParse({ name: 'Office', propertyType: 'COMMERCIAL' }).success).toBe(false);
+    expect(createProjectSchema.parse({ name: '  Our home  ' })).toEqual({ name: 'Our home', propertyType: 'RESIDENTIAL' });
+    expect(createProjectSchema.safeParse({ name: 'Office', propertyType: 'INDUSTRIAL' }).success).toBe(false);
   });
   it('rejects unknown fields and forged owner, revision, and AI provenance', () => {
     for (const additional of [{ ownerUserId: randomUUID() }, { source: 'AI' }, { revision: 44 }]) {

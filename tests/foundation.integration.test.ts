@@ -47,7 +47,7 @@ describe('PostgreSQL project workflows', () => {
     const anotherService = new ProjectService(createProjectUnitOfWork(pool), randomUUID, () => new Date());
     expect(await anotherService.get(owner, project.id)).toEqual(project);
     const first = await service.version(owner, project.id, project.versionId);
-    expect(first.snapshot).toEqual({ schemaVersion: 1, projectId: project.id, name: 'Our first home', propertyType: 'RESIDENTIAL_HOUSE', status: 'ACTIVE' });
+    expect(first.snapshot).toEqual({ schemaVersion: 1, projectId: project.id, name: 'Our first home', propertyType: 'RESIDENTIAL', status: 'ACTIVE' });
     expect(first.createdBy).toBe(owner.userId);
     expect(await service.members(owner, project.id)).toEqual([expect.objectContaining({ userId: owner.userId, role: 'OWNER' })]);
     const audit = await pool.query('SELECT * FROM audit_events WHERE project_id=$1', [project.id]);
@@ -149,7 +149,7 @@ describe('PostgreSQL project workflows', () => {
   });
   it('applies migrations idempotently with tracked checksums', async () => {
     await migrate(pool);
-    expect((await pool.query('SELECT name FROM schema_migrations ORDER BY name')).rows.map(row => row.name)).toEqual(['001_foundation.sql', '002_site_intake.sql', '003_property_requirements.sql']);
+    expect((await pool.query('SELECT name FROM schema_migrations ORDER BY name')).rows.map(row => row.name)).toEqual(['001_foundation.sql', '002_site_intake.sql', '003_property_requirements.sql', '004_project_property_types.sql']);
   });
   it('reports readiness after the required migration has completed', async () => {
     expect(await isDatabaseReady(pool)).toBe(true);

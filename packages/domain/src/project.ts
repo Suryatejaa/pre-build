@@ -1,28 +1,30 @@
 import { z } from 'zod';
+import { propertyTypeSchema, storedPropertyTypeSchema, normalizePropertyType, type StoredPropertyType } from './property-type';
 import { siteSchema, type Site } from './site';
 import { propertyRequirementsSchema, type PropertyRequirements } from './requirements';
 
 export const idSchema = z.uuid();
 export const projectNameSchema = z.string().trim().min(2, 'Use at least 2 characters.').max(120);
-export const propertyTypeSchema = z.literal('RESIDENTIAL_HOUSE');
 export const projectStatusSchema = z.enum(['ACTIVE', 'ARCHIVED']);
 export const createProjectSchema = z.strictObject({
   name: projectNameSchema,
-  propertyType: propertyTypeSchema.default('RESIDENTIAL_HOUSE'),
+  // Retain the original create API spelling as a deprecated input alias.
+  propertyType: storedPropertyTypeSchema.transform(normalizePropertyType).default('RESIDENTIAL'),
 });
 export const updateProjectSchema = z.strictObject({
   expectedRevision: z.number().int().positive(),
   name: projectNameSchema.optional(),
   status: projectStatusSchema.optional(),
+  propertyType: propertyTypeSchema.optional(),
   changeReason: z.string().trim().min(5, 'Briefly explain this change (at least 5 characters).').max(500),
-}).refine(value => value.name !== undefined || value.status !== undefined, 'Provide a project change.');
+}).refine(value => value.name !== undefined || value.status !== undefined || value.propertyType !== undefined, 'Provide a project change.');
 
 /** Canonical versioned data. Extend through explicit schema migrations, never opaque AI blobs. */
 export const projectSnapshotV1Schema = z.strictObject({
   schemaVersion: z.literal(1),
   projectId: idSchema,
   name: projectNameSchema,
-  propertyType: propertyTypeSchema,
+  propertyType: storedPropertyTypeSchema,
   status: projectStatusSchema,
 });
 export const projectSnapshotV2Schema = projectSnapshotV1Schema.extend({ schemaVersion: z.literal(2), site: siteSchema.nullable() });
@@ -31,7 +33,8 @@ export const projectSnapshotSchema = z.union([projectSnapshotV1Schema, projectSn
 /** Read-time normalization only. Stored V1 history and metadata-only writes remain V1. */
 export function normalizeProjectSnapshot(input: unknown) {
   const snapshot = projectSnapshotSchema.parse(input);
-  return snapshot.schemaVersion === 1 ? { ...snapshot, schemaVersion: 2 as const, site: null } : snapshot;
+  const current = { ...snapshot, propertyType: normalizePropertyType(snapshot.propertyType) };
+  return current.schemaVersion === 1 ? { ...current, schemaVersion: 2 as const, site: null } : current;
 }
 /** Explicitly creates the first requirements-bearing snapshot; historical snapshots stay unchanged. */
 export function withRequirements(input: unknown, requirements: PropertyRequirements) {
@@ -39,7 +42,7 @@ export function withRequirements(input: unknown, requirements: PropertyRequireme
   return projectSnapshotV3Schema.parse({ ...snapshot, schemaVersion: 3, requirements });
 }
 export interface ProjectVersionView extends Omit<ProjectVersion, 'snapshot'> {
-  snapshot: { schemaVersion: 1 | 2 | 3; projectId: string; name: string; propertyType: 'RESIDENTIAL_HOUSE'; status: 'ACTIVE' | 'ARCHIVED'; site?: Site | null; requirements?: PropertyRequirements };
+  snapshot: { schemaVersion: 1 | 2 | 3; projectId: string; name: string; propertyType: StoredPropertyType; status: 'ACTIVE' | 'ARCHIVED'; site?: Site | null; requirements?: PropertyRequirements };
   redactedFields?: string[];
 }
 export const paginationSchema = z.strictObject({ page: z.coerce.number().int().min(1).max(10000).default(1) });

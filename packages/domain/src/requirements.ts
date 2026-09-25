@@ -1,9 +1,10 @@
 import { z } from 'zod';
+import { propertyTypeSchema, type PropertyType } from './property-type';
 
 const idSchema = z.uuid();
 
 export const requirementPrioritySchema = z.enum(['MUST_HAVE', 'PREFERRED', 'OPTIONAL', 'AVOID']);
-export const provenanceKindSchema = z.enum(['DIRECTLY_STATED', 'AI_INTERPRETED', 'AI_SUGGESTED_ACCEPTED', 'MANUALLY_EDITED', 'IMPORTED']);
+export const provenanceKindSchema = z.enum(['DIRECTLY_STATED', 'AI_INTERPRETED', 'AI_SUGGESTED_ACCEPTED', 'MANUALLY_EDITED', 'IMPORTED', 'PROJECT_CONTEXT']);
 export const confidenceSchema = z.enum(['HIGH', 'MEDIUM', 'LOW']);
 export const provenanceRecordSchema = z.strictObject({
   kind: provenanceKindSchema,
@@ -118,7 +119,7 @@ export const expansionNeedSchema = z.strictObject({
 
 export const propertyRequirementsSchema = z.strictObject({
   requirementsSchemaVersion: z.literal(1),
-  buildingIntent: nullableProvenanced(z.strictObject({ kind: z.enum(['RESIDENTIAL', 'COMMERCIAL', 'MIXED_USE', 'OTHER']), otherDescription: z.string().trim().min(1).max(120).nullable() })),
+  buildingIntent: nullableProvenanced(z.strictObject({ kind: propertyTypeSchema, otherDescription: z.string().trim().min(1).max(120).nullable() })),
   occupancy: z.strictObject({
     householdSize: nullableProvenanced(z.number().int().min(1).max(100)),
     adults: nullableProvenanced(z.number().int().min(0).max(100)),
@@ -184,7 +185,7 @@ export function requirementsCompleteness(requirements: PropertyRequirements) {
     return [exact, minimum, maximum, preferred].some(value => value !== undefined && value > 0);
   };
   const items: RequirementCompletenessItem[] = [
-    { key: 'buildingIntent', category: 'REQUIRED', complete: requirements.buildingIntent !== null, prompt: 'What kind of building do you want?' },
+    { key: 'buildingIntent', category: 'REQUIRED', complete: requirements.buildingIntent !== null, prompt: requirements.buildingIntent ? 'Property type recorded in the project.' : 'What kind of building do you want?' },
     { key: 'buildingScale.floorCount', category: 'REQUIRED', complete: floorCountSet, prompt: 'How many floors should the building have?' },
     { key: 'spaces', category: 'REQUIRED', complete: requirements.spaces.length > 0 && requirements.spaces.every(space => Object.keys(space.count).length > 0 && hasRequestedSpace(space)), prompt: 'Which spaces do you need, and how many?' },
     { key: 'rental.mode', category: 'REQUIRED', complete: requirements.rental.mode !== null, prompt: 'Will this be owner-only, or include a rental unit or floor?' },
@@ -268,4 +269,20 @@ export function detectRequirementConflicts(current: PropertyRequirements, previo
     push('BUDGET_TARGET_EXCEEDS_MAXIMUM', ['budget.target', 'budget.maximum'], [current.budget.provenance?.current.sourceMessageId ?? null, options.messageId], 'The target budget is higher than the stated maximum. Confirm or edit the amounts.');
   }
   return conflicts;
+}
+
+/** Derive only the high-level type for a working draft. Never call on stored approved history. */
+export function requirementsWithProjectType(requirements: PropertyRequirements, propertyType: PropertyType): PropertyRequirements {
+  const previous = requirements.buildingIntent;
+  if (previous?.value.kind === propertyType && previous.provenance.current.kind === 'PROJECT_CONTEXT') return requirements;
+  return { ...requirements, buildingIntent: {
+    value: { kind: propertyType, otherDescription: previous?.value.kind === propertyType ? previous.value.otherDescription : null },
+    provenance: {
+      current: { kind: 'PROJECT_CONTEXT', actorId: null, sourceMessageId: null, confidence: 'HIGH' },
+      history: previous ? [...previous.provenance.history, previous.provenance.current].slice(-20) : [],
+    },
+  } };
+}
+export function requirementsMatchProjectType(requirements: PropertyRequirements, propertyType: PropertyType): boolean {
+  return requirements.buildingIntent?.value.kind === propertyType;
 }

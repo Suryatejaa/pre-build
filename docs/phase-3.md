@@ -37,3 +37,13 @@ See [the HTTP contract](api.md#projects) for the Requirements endpoints and expe
 ## Phase 4 boundary
 
 Phase 4 may consume one canonical Site record and one approved V3 Property Requirements specification. It may add a separate planning/constraint model. It must not reinterpret the Phase 3 transcript or treat Phase 3 preferences as geometry or feasibility conclusions.
+
+## Canonical Project Property Type correction
+
+Project Details is the sole mutable authority for the high-level property type. Requirements building intent is a planning-context copy tied to the interview's `expectedProjectRevision`, not a second editable source. New/reopened candidates derive it with `PROJECT_CONTEXT` provenance (no invented owner message or actor); prior provenance is retained when the copy changes. Older active candidates with null intent receive known context in their read representation and persist it on the next candidate edit or interpretation. Approved snapshots/interviews remain unchanged.
+
+Provider input includes `propertyType` plus the derived candidate and instructs the assistant not to ask for a known type. Deterministic follow-up questions use missing required fields and low-confidence review; provider-generated follow-up questions are not appended because they can redundantly ask for canonical context. AI type extractions cannot change project data. Requests to change it direct the owner to Project Details. The manual editor displays the type as context, and its API rejects a conflicting kind.
+
+If project and approved brief types differ, the Requirements view explicitly warns, marks completeness blocked, and offers the existing new-revision workflow. A stale or mismatched open interview is superseded when the owner starts fresh. That new candidate derives only the high-level type, retains other requirements for owner review, and never rewrites the approved brief. Non-residential requirements remain capturable but cannot be approved by the residential completeness rules. A matching draft does not clear the approved-mismatch flag until it is explicitly approved.
+
+Legacy RESIDENTIAL_HOUSE V1/V2/V3 snapshots remain readable and byte-for-byte untouched in PostgreSQL. Current Project views and normalization expose RESIDENTIAL; raw authorized history preserves legacy spelling. Shared UI labels hide storage enum details. This correction does not start Phase 4.

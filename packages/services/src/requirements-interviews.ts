@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import {
-  DomainError, emptyPropertyRequirements, idSchema, interviewCandidateSchema,
+  requirementsWithProjectType, requirementsMatchProjectType, propertyTypeLabel, DomainError, emptyPropertyRequirements, idSchema, interviewCandidateSchema,
   normalizeProjectSnapshot, propertyRequirementsSchema, requirementsCompleteness, detectRequirementConflicts,
   stableJson, withRequirements, type InterviewCandidate, type InterviewMessage, type PropertyRequirements,
   type RequirementProvenance, type RequirementsInterview, type RequirementsInterviewView, type Site, type SiteDiscrepancy,
@@ -128,9 +128,8 @@ function addFact(requirements: PropertyRequirements, response: RequirementsAiRes
     if (!acceptedSuggestion(fact, ownerMessage)) continue;
     const source = factProvenance(fact, actorId, messageId, ownerMessage);
     switch (fact.category) {
-      case 'BUILDING_INTENT':
-        next.buildingIntent = { value: { kind: fact.value, otherDescription: fact.otherDescription }, provenance: priorHistory(next.buildingIntent?.provenance, source) };
-        break;
+      // The interview cannot change the canonical project type.
+      case 'BUILDING_INTENT': break;
       case 'OCCUPANCY': {
         const field = fact.field;
         if (field === 'staffAccommodation' || field === 'accessibilityNeedsConfirmed') {
@@ -279,9 +278,28 @@ export class RequirementsInterviewService {
     const snapshot = normalizeProjectSnapshot(project.currentVersion.snapshot);
     const reqs = snapshot.schemaVersion === 3 ? snapshot.requirements : null;
     const site = snapshot.site;
+    // Older open drafts may not yet have copied the known type. Derive it in the view;
+    // approved interviews and snapshots remain exactly as recorded.
+    const isDraft = interview !== null && !['APPROVED', 'SUPERSEDED'].includes(interview.status);
+    if (isDraft && interview && !interview.candidate.requirements.buildingIntent) {
+      const requirements = requirementsWithProjectType(interview.candidate.requirements, snapshot.propertyType);
+      interview = { ...interview, candidate: { ...interview.candidate, requirements, questions: requiredQuestions(requirements) } };
+    }
+    const propertyTypeMismatch = {
+      approved: reqs !== null && !requirementsMatchProjectType(reqs, snapshot.propertyType),
+      draft: isDraft && interview !== null && !requirementsMatchProjectType(interview.candidate.requirements, snapshot.propertyType),
+    };
+    const activeRequirements = isDraft && interview ? interview.candidate.requirements : reqs;
+    const completeness = activeRequirements ? requirementsCompleteness(activeRequirements) : null;
+    if (completeness && (isDraft ? propertyTypeMismatch.draft : propertyTypeMismatch.approved)) {
+      const item = { key: 'buildingIntent.projectMismatch', category: 'REQUIRED' as const, complete: false,
+        prompt: 'The brief uses a different property type. Start a fresh requirements draft and review it against Project Details.' };
+      completeness.items.push(item); completeness.blockingItems.push(item); completeness.complete = false;
+    }
     return { projectId: project.id, projectRevision: project.currentRevision, versionId: project.currentVersion.id,
+      propertyType: snapshot.propertyType, propertyTypeMismatch,
       status: interview?.status ?? 'NOT_STARTED', siteContext: siteContext(site), approvedRequirements: reqs,
-      interview, completeness: interview ? requirementsCompleteness(interview.candidate.requirements) : reqs ? requirementsCompleteness(reqs) : null };
+      interview, completeness };
   }
   async get(actor: { userId: string }, projectId: string): Promise<RequirementsInterviewView> {
     const project = await this.authorized(this.uow.read, actor, projectId);
@@ -295,12 +313,13 @@ export class RequirementsInterviewService {
       if (project.currentRevision !== request.expectedRevision) throw new DomainError('CONFLICT', 'The project changed. Refresh the Requirements page before continuing.');
       const current = await repo.interview(projectId);
       if (current && current.status !== 'APPROVED' && current.status !== 'SUPERSEDED') {
-        if (current.expectedProjectRevision === project.currentRevision) return this.view(project, current);
+        if (current.expectedProjectRevision === project.currentRevision
+          && (!current.candidate.requirements.buildingIntent || requirementsMatchProjectType(current.candidate.requirements, normalizeProjectSnapshot(project.currentVersion.snapshot).propertyType))) return this.view(project, current);
         const stale = { ...current, status: 'SUPERSEDED' as const, updatedAt: this.now().toISOString() };
         await repo.saveInterview(stale);
       }
       const wasReopen = current?.status === 'APPROVED' || current?.status === 'SUPERSEDED';
-      const carryDraft = current !== null && current.status !== 'APPROVED' && (current.status === 'SUPERSEDED' || current.expectedProjectRevision !== project.currentRevision);
+      const carryDraft = current !== null && current.status !== 'APPROVED';
       const baseRequirements = carryDraft && current ? current.candidate.requirements : versionRequirements(project) ?? emptyPropertyRequirements();
       const currentSnapshot = normalizeProjectSnapshot(project.currentVersion.snapshot);
       let draftCandidate = makeCandidate(baseRequirements);
@@ -311,6 +330,8 @@ export class RequirementsInterviewService {
           : item);
         draftCandidate = interviewCandidateSchema.parse({ ...current.candidate, siteDiscrepancies, lastAiError: null });
       }
+      const requirements = requirementsWithProjectType(draftCandidate.requirements, currentSnapshot.propertyType);
+      draftCandidate = { ...draftCandidate, requirements, questions: requiredQuestions(requirements) };
       const next = candidateWithStatus(draftCandidate);
       const candidate = next.candidate;
       const timestamp = this.now().toISOString();
@@ -319,9 +340,9 @@ export class RequirementsInterviewService {
         createdAt: timestamp, updatedAt: timestamp };
       await repo.createInterview(interview);
       const message: InterviewMessage = { id: this.id(), interviewId: interview.id, role: 'ASSISTANT',
-        content: carryDraft ? 'A fresh interview is open with your current requirements draft carried forward. Review the updated saved Site context, then tell me what you would like to change.'
+        content: `Project type: ${propertyTypeLabel(currentSnapshot.propertyType)}, from Project Details. ` + (carryDraft ? 'A fresh interview is open with your current requirements draft carried forward. Review the updated saved Site context, then tell me what you would like to change.'
           : wasReopen ? 'A new requirements draft is open, starting from the latest approved brief. Tell me what you would like to change.'
-          : 'Tell me what you want to build. I’ll turn your requests into a structured brief and ask about missing details. You can edit the brief manually at any time.',
+          : 'Tell me what you want to build. I’ll turn your requests into a structured brief and ask about missing details. You can edit the brief manually at any time.'),
         createdAt: timestamp, provider: null, model: null };
       await repo.appendInterviewMessage(message);
       await repo.audit({ id: this.id(), projectId, projectVersionId: project.currentVersion.id, actorId: actor.userId,
@@ -338,10 +359,14 @@ export class RequirementsInterviewService {
       if (!interview || interview.status === 'APPROVED' || interview.status === 'SUPERSEDED') throw new DomainError('CONFLICT', 'Start a new requirements interview before editing this brief.');
       if (interview.expectedProjectRevision !== project.currentRevision) throw new DomainError('CONFLICT', 'The project changed during this interview. Start a fresh draft with the current Site data.');
       const before = interview.candidate.requirements;
-      const requirements = propertyRequirementsSchema.parse(preserveManualProvenance(request.requirements, before, actor.userId));
+      const propertyType = normalizeProjectSnapshot(project.currentVersion.snapshot).propertyType;
+      if (request.requirements.buildingIntent && !requirementsMatchProjectType(request.requirements, propertyType)) {
+        throw new DomainError('INVALID_INPUT', 'Property type comes from Project Details. Change it there, then start a fresh requirements draft.');
+      }
+      const requirements = requirementsWithProjectType(propertyRequirementsSchema.parse(preserveManualProvenance(request.requirements, before, actor.userId)), propertyType);
       const detected = detectRequirementConflicts(requirements, before, { messageId: null, explicitCorrection: true, id: this.id });
       const conflicts = mergeConflicts(interview.candidate.conflicts, detected);
-      const candidate = interviewCandidateSchema.parse({ ...interview.candidate, requirements, conflicts, lastAiError: null });
+      const candidate = interviewCandidateSchema.parse({ ...interview.candidate, requirements, questions: requiredQuestions(requirements), conflicts, lastAiError: null });
       const state = candidateWithStatus(candidate);
       const updated = { ...interview, candidate: state.candidate, status: state.status, updatedAt: this.now().toISOString(), expectedProjectRevision: project.currentRevision };
       await repo.saveInterview(updated);
@@ -429,7 +454,7 @@ export class RequirementsInterviewService {
     try {
       const requestBase = {
         systemPrompt: requirementsInterviewSystemPrompt,
-        input: { ownerMessage: ownerMessage.content, currentCandidate: interview.candidate.requirements, siteContext: siteContext(site), recentMessages: interview.messages.slice(-5).map(message => ({ role: message.role, content: message.content })) },
+        input: { propertyType: snapshot.propertyType, ownerMessage: ownerMessage.content, currentCandidate: requirementsWithProjectType(interview.candidate.requirements, snapshot.propertyType), siteContext: siteContext(site), recentMessages: interview.messages.slice(-5).map(message => ({ role: message.role, content: message.content })) },
         schemaName: 'property_requirements_interview_turn',
         schema: z.toJSONSchema(requirementsAiResponseSchema) as Record<string, unknown>,
       };
@@ -449,16 +474,19 @@ export class RequirementsInterviewService {
         if (currentProject.currentRevision !== interview.expectedProjectRevision) throw new DomainError('CONFLICT', 'The project changed while the assistant was working. Refresh the Requirements page.');
         const current = await repo.interview(projectId);
         if (!current || current.id !== interview.id || current.candidate.lastOwnerMessageId !== ownerMessage.id) throw new DomainError('CONFLICT', 'A newer message was submitted. Refresh the Requirements page.');
-        const requirements = addFact(current.candidate.requirements, generated, actorId, ownerMessage.id, ownerMessage.content, this.id);
+        const requirements = requirementsWithProjectType(addFact(current.candidate.requirements, generated, actorId, ownerMessage.id, ownerMessage.content, this.id), snapshot.propertyType);
         const detected = detectRequirementConflicts(requirements, current.candidate.requirements, { messageId: ownerMessage.id, explicitCorrection: generated.explicitCorrection || isClearCorrection(ownerMessage.content), id: this.id });
         const conflicts = mergeConflicts(current.candidate.conflicts, detected);
         const siteDiscrepancies = addSiteDiscrepancies(current.candidate.siteDiscrepancies, generated.siteClaims, site, ownerMessage.id, this.id);
         const lowQuestions = containsLowConfidence(requirements) ? ['Please confirm any low-confidence details in the Project Brief before approval.'] : [];
-        const questions = [...new Set([...requiredQuestions(requirements), ...lowQuestions, ...generated.followUpQuestions])].slice(0, 12);
+        // Follow-ups come from deterministic missing fields; provider questions must not
+        // re-ask known canonical context or claim unsupported planning completeness.
+        const questions = [...new Set([...requiredQuestions(requirements), ...lowQuestions])].slice(0, 12);
         const candidate = interviewCandidateSchema.parse({ ...current.candidate, requirements, conflicts, siteDiscrepancies, questions, lastAiError: null });
         const state = candidateWithStatus(candidate);
         const timestamp = this.now().toISOString();
-        const assistantMessage: InterviewMessage = { id: this.id(), interviewId: current.id, role: 'ASSISTANT', content: generated.assistantMessage, createdAt: timestamp, provider: this.aiProvider!.metadata.provider, model: this.aiProvider!.metadata.model };
+        const assistantMessage: InterviewMessage = { id: this.id(), interviewId: current.id, role: 'ASSISTANT', content: generated.extractions.some(fact => fact.category === 'BUILDING_INTENT' && fact.value !== snapshot.propertyType)
+          ? `The project type is ${propertyTypeLabel(snapshot.propertyType)}. To change it, update Project Details and start a fresh requirements draft. Other details from this message have been recorded.` : generated.assistantMessage, createdAt: timestamp, provider: this.aiProvider!.metadata.provider, model: this.aiProvider!.metadata.model };
         const updated = { ...current, candidate: state.candidate, status: state.status, updatedAt: timestamp };
         await repo.appendInterviewMessage(assistantMessage); await repo.saveInterview(updated);
         await repo.recordAiRequest({ id: this.id(), interviewId: current.id, provider: this.aiProvider!.metadata.provider, model: this.aiProvider!.metadata.model,
@@ -499,6 +527,9 @@ export class RequirementsInterviewService {
       const interview = await repo.interview(projectId);
       if (!interview || interview.status === 'APPROVED' || interview.status === 'SUPERSEDED') throw new DomainError('CONFLICT', 'There is no open requirements brief to approve.');
       if (interview.expectedProjectRevision !== project.currentRevision) throw new DomainError('CONFLICT', 'The project changed during this interview. Start a fresh requirements revision with the current Site data.');
+      if (!requirementsMatchProjectType(interview.candidate.requirements, normalizeProjectSnapshot(project.currentVersion.snapshot).propertyType)) {
+        throw new DomainError('CONFLICT', 'The brief does not match the project property type. Start a fresh requirements draft and review it before approval.');
+      }
       const completeness = requirementsCompleteness(interview.candidate.requirements);
       if (!completeness.complete) throw new DomainError('INVALID_INPUT', 'Complete the required Project Brief fields before approval.');
       if (interview.candidate.conflicts.some(item => item.status === 'OPEN')) throw new DomainError('CONFLICT', 'Resolve all blocking requirement conflicts before approval.');

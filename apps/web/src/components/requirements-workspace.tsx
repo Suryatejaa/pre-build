@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
-import { emptyPropertyRequirements, type PropertyRequirements, type RequirementProvenance, type RequirementsInterviewView } from '@property/domain';
+import { propertyTypeLabel, emptyPropertyRequirements, type PropertyRequirements, type RequirementProvenance, type RequirementsInterviewView } from '@property/domain';
 
 const manualProvenance: RequirementProvenance = { current: { kind: 'MANUALLY_EDITED', sourceMessageId: null, actorId: null, confidence: null }, history: [] };
 const spaceTypes: PropertyRequirements['spaces'][number]['type'][] = ['BEDROOM','BATHROOM','LIVING_ROOM','FAMILY_LOUNGE','KITCHEN','DINING','PUJA_ROOM','HOME_OFFICE','STUDY','UTILITY','STORE_ROOM','BALCONY','TERRACE','PARKING','GARAGE','GARDEN','COURTYARD','STAFF_ROOM','RENTAL_UNIT','COMMERCIAL_SPACE','OTHER'];
@@ -17,7 +17,7 @@ const stamp = () => structuredClone(manualProvenance);
 const valueField = <T,>(value: T) => ({ value, provenance: stamp() });
 const blankSpace = (): PropertyRequirements['spaces'][number] => ({ id: crypto.randomUUID(), type: 'BEDROOM', customName: null, count: {}, floor: { kind: 'UNSPECIFIED' }, size: { kind: 'NO_PREFERENCE' }, priority: 'PREFERRED', provenance: stamp() });
 const pretty = (value: string) => value.toLowerCase().replaceAll('_', ' ').replace(/\b\w/g, letter => letter.toUpperCase());
-const provenanceLabel = (kind?: string) => ({ DIRECTLY_STATED: 'From your message', AI_INTERPRETED: 'AI interpretation · review', AI_SUGGESTED_ACCEPTED: 'Suggestion you accepted', MANUALLY_EDITED: 'Edited by you', IMPORTED: 'Imported' }[kind ?? ''] ?? 'Not yet specified');
+const provenanceLabel = (kind?: string) => ({ DIRECTLY_STATED: 'From your message', AI_INTERPRETED: 'AI interpretation · review', AI_SUGGESTED_ACCEPTED: 'Suggestion you accepted', MANUALLY_EDITED: 'Edited by you', IMPORTED: 'Imported', PROJECT_CONTEXT: 'From Project Details' }[kind ?? ''] ?? 'Not yet specified');
 function hasLowConfidence(value: unknown): boolean {
   if (Array.isArray(value)) return value.some(hasLowConfidence);
   if (!value || typeof value !== 'object') return false;
@@ -38,7 +38,7 @@ function BriefView({ requirements }: { requirements: PropertyRequirements }) {
   const evidence = (kind?: string) => <span className={`evidence-tag${kind === 'AI_INTERPRETED' ? ' inferred' : ''}`}>{provenanceLabel(kind)}</span>;
   const hasFloorCount = Object.values(requirements.buildingScale.floorCount.value).some(value => value !== undefined);
   return <div className="brief-sections">
-    <section className="brief-section"><h3>Building</h3><p>{requirements.buildingIntent ? pretty(requirements.buildingIntent.value.kind) : 'Not specified'} {requirements.buildingIntent?.value.otherDescription ? `· ${requirements.buildingIntent.value.otherDescription}` : ''}</p>{requirements.buildingIntent && evidence(requirements.buildingIntent.provenance.current.kind)}
+    <section className="brief-section"><h3>Building</h3><p>{requirements.buildingIntent ? propertyTypeLabel(requirements.buildingIntent.value.kind) : 'Not specified'} {requirements.buildingIntent?.value.otherDescription ? `· ${requirements.buildingIntent.value.otherDescription}` : ''}</p>{requirements.buildingIntent && evidence(requirements.buildingIntent.provenance.current.kind)}
       {hasFloorCount ? <><p>{countLabel(requirements.buildingScale.floorCount.value)} floor{requirements.buildingScale.floorCount.value.exact === 1 ? '' : 's'} · {pretty(requirements.buildingScale.floorCount.priority)}</p>{evidence(requirements.buildingScale.floorCount.provenance.current.kind)}</> : <p>Floor count not specified.</p>}
       {requirements.buildingScale.basement && <p>Basement: {requirements.buildingScale.basement.value ? 'requested' : 'not requested'}</p>}
       {requirements.buildingScale.lift && <p>Lift: {requirements.buildingScale.lift.value ? 'requested' : 'not requested'}</p>}
@@ -64,7 +64,7 @@ function BriefEditor({ requirements, changeReason, setChangeReason, onChange, on
     <summary>Edit Project Brief</summary>
     <form className="form-stack" onSubmit={onSave}>
       <div className="requirements-group"><h3>Building &amp; occupancy</h3><div className="field-grid">
-        <Field label="Building intent"><Select value={requirements.buildingIntent?.value.kind ?? ''} placeholder="Choose intent" options={['RESIDENTIAL','COMMERCIAL','MIXED_USE','OTHER']} onChange={value => onChange(current => ({ ...current, buildingIntent: value ? { value: { kind: value as NonNullable<PropertyRequirements['buildingIntent']>['value']['kind'], otherDescription: null }, provenance: current.buildingIntent?.provenance ?? stamp() } : null }))} /></Field>
+        <div><span className="label">Property type · from Project Details</span><p>{requirements.buildingIntent ? propertyTypeLabel(requirements.buildingIntent.value.kind) : 'See Project Details'}</p><p className="help">Change property type in Project Details, then reopen this brief for review.</p></div>
         <Field label="Exact floor count"><input inputMode="numeric" value={requirements.buildingScale.floorCount.value.exact ?? ''} onChange={event => onChange(current => ({ ...current, buildingScale: { ...current.buildingScale, floorCount: { ...current.buildingScale.floorCount, value: counts(current.buildingScale.floorCount.value, 'exact', event.target.value) } } }))} /></Field>
         <Field label="Minimum floors"><input inputMode="numeric" value={requirements.buildingScale.floorCount.value.minimum ?? ''} onChange={event => onChange(current => ({ ...current, buildingScale: { ...current.buildingScale, floorCount: { ...current.buildingScale.floorCount, value: counts(current.buildingScale.floorCount.value, 'minimum', event.target.value) } } }))} /></Field>
         <Field label="Preferred floors"><input inputMode="numeric" value={requirements.buildingScale.floorCount.value.preferred ?? ''} onChange={event => onChange(current => ({ ...current, buildingScale: { ...current.buildingScale, floorCount: { ...current.buildingScale.floorCount, value: counts(current.buildingScale.floorCount.value, 'preferred', event.target.value) } } }))} /></Field>
@@ -137,7 +137,7 @@ export function RequirementsWorkspace({ projectId, initial }: { projectId: strin
   const [discrepancyResolution, setDiscrepancyResolution] = useState<Record<string, string>>({});
   const isOpen = Boolean(state.interview && ['IN_PROGRESS','REVIEW_REQUIRED'].includes(state.interview.status));
   const activeRequirements = state.interview?.candidate.requirements ?? state.approvedRequirements ?? requirements;
-  const stale = Boolean(state.interview && state.interview.status !== 'APPROVED' && state.interview.status !== 'SUPERSEDED' && state.interview.expectedProjectRevision !== state.projectRevision);
+  const stale = state.propertyTypeMismatch.draft || Boolean(state.interview && state.interview.status !== 'APPROVED' && state.interview.status !== 'SUPERSEDED' && state.interview.expectedProjectRevision !== state.projectRevision);
   const candidate = state.interview?.candidate;
   const openConflicts = candidate?.conflicts.filter(item => item.status === 'OPEN') ?? [];
   const openDiscrepancies = candidate?.siteDiscrepancies.filter(item => item.status === 'OPEN') ?? [];
@@ -201,9 +201,13 @@ export function RequirementsWorkspace({ projectId, initial }: { projectId: strin
     <section className="requirements-conversation form-panel" aria-labelledby="conversation-heading">
       <div className="section-heading"><div><p className="eyebrow">OWNER INTERVIEW</p><h2 id="conversation-heading">Conversation</h2></div><span className={`status${state.status === 'APPROVED' ? '' : ' muted'}`}>{pretty(state.status)}</span></div>
       <p className="help section-top">Describe spaces, floors, accessibility, parking, privacy, budget intent, or other requirements in your own words. Saved Site facts are used as context and are not copied into this brief.</p>
+      <p className="help section-top">Project type: {propertyTypeLabel(state.propertyType)} · from Project Details.</p>
+      {state.propertyType !== 'RESIDENTIAL' && <p className="feedback">Requirements can be recorded for this property type. Advanced planning support is limited, and the current residential workflow cannot approve this brief.</p>}
+      {state.propertyTypeMismatch.approved && <p className="feedback error" role="alert">The approved brief uses a different property type from Project Details. It remains preserved in history. Start a new requirements revision and review the carried-forward details.</p>}
+      {state.propertyTypeMismatch.draft && <p className="feedback error" role="alert">This draft’s property type differs from Project Details. Start a fresh requirements draft to review the current project type.</p>}
       {!state.interview || state.status === 'APPROVED' || state.status === 'SUPERSEDED' ? <div className="start-interview"><p>{state.status === 'APPROVED' ? `Approved in project version ${state.interview?.expectedProjectRevision}.` : state.status === 'SUPERSEDED' ? 'The project changed during this draft. Start fresh using the current project and Site record.' : 'Start a structured interview or complete the Project Brief manually.'}</p><button className="button primary" disabled={pending} onClick={start}>{state.status === 'APPROVED' ? 'Start a new requirements revision' : 'Start requirements interview'}</button></div> : <>
         <ol className="conversation-messages" aria-label="Interview messages">{state.interview.messages.map(item => <li key={item.id} className={`conversation-message ${item.role.toLowerCase()}`}><span className="message-role">{item.role === 'OWNER' ? 'You' : 'Assistant'}</span><p>{item.content}</p>{item.role === 'ASSISTANT' && item.provider && <span className="message-meta">{item.provider} · {item.model}</span>}</li>)}</ol>
-        {stale && <div className="feedback error stale-draft"><p>This draft used an older project version. Your candidate will carry forward when you start fresh with the latest Site information.</p><button type="button" className="button quiet" disabled={pending} onClick={start}>Start fresh requirements draft</button></div>}
+        {stale && <div className="feedback error stale-draft"><p>This draft used an older project version. Your candidate will carry forward when you start fresh with the latest project type and Site information.</p><button type="button" className="button quiet" disabled={pending} onClick={start}>Start fresh requirements draft</button></div>}
         {candidate?.lastAiError && <div className="ai-recovery"><p className="feedback error">{candidate.lastAiError === 'AI_UNAVAILABLE' ? 'AI is not configured. Your message is saved; you can edit the structured brief manually.' : 'The assistant could not process this turn. Your message is saved and the brief is still editable.'}</p><button type="button" className="button quiet" disabled={pending || stale} onClick={retry}>Retry assistant</button></div>}
         <form className="message-compose" onSubmit={send}><label htmlFor="owner-message">Your requirements</label><textarea id="owner-message" maxLength={4000} value={message} onChange={event => setMessage(event.target.value)} placeholder="For example: G+1, three bedrooms, and a ground-floor bedroom for my parents." disabled={pending || stale} /><div className="form-actions"><button className="button primary" disabled={pending || stale || !message.trim()}>{pending ? 'Working…' : 'Send message'}</button><span className="help">The transcript provides context; your approved brief is structured project data.</span></div></form>
       </>}

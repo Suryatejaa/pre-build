@@ -7,3 +7,4 @@ export * from './site';
 export * from './site-attachments';
 export * from './requirements';
 export * from './requirements-interview';
+export * from './property-type';

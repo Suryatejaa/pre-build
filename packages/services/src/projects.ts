@@ -2,20 +2,20 @@ import { z } from 'zod';
 import {
   assignMemberSchema, createProjectSchema, DomainError, idSchema, paginationSchema,
   projectSnapshotSchema, requirePermission, updateProjectSchema, normalizeProjectSnapshot, buildSite, siteFactsSchema, stableJson,
-  type ProjectSnapshot, type ProjectVersion, type ProjectVersionView,
+  normalizePropertyType, type PropertyType, type ProjectSnapshot, type ProjectVersion, type ProjectVersionView,
   type Principal, type PropertyProject, type ProjectRole,
 } from '@property/domain';
 import type { AuthorizedProject, ProjectRepository, ProjectUnitOfWork } from './repository';
 
 export interface ProjectSummary {
-  id: string; name: string; propertyType: 'RESIDENTIAL_HOUSE'; status: 'ACTIVE' | 'ARCHIVED';
+  id: string; name: string; propertyType: PropertyType; status: 'ACTIVE' | 'ARCHIVED';
   revision: number; versionId: string; role: ProjectRole; createdAt: string; updatedAt: string;
 }
 /** Explicit allowlist: adding private data to a snapshot must never expose it through project listings. */
 function summary({ project, role }: AuthorizedProject): ProjectSummary {
   return {
     id: project.id, name: project.currentVersion.snapshot.name,
-    propertyType: project.currentVersion.snapshot.propertyType, status: project.currentVersion.snapshot.status,
+    propertyType: normalizePropertyType(project.currentVersion.snapshot.propertyType), status: project.currentVersion.snapshot.status,
     revision: project.currentRevision, versionId: project.currentVersion.id, role,
     createdAt: project.createdAt, updatedAt: project.updatedAt,
   };
@@ -76,8 +76,9 @@ export class ProjectService {
       requirePermission(role, 'project:edit');
       if (project.currentRevision !== change.expectedRevision) throw new DomainError('CONFLICT', 'This project changed since you opened it. Reload before saving.');
       const before = project.currentVersion.snapshot;
-      const after = projectSnapshotSchema.parse({ ...before, name: change.name ?? before.name, status: change.status ?? before.status });
-      if (after.name === before.name && after.status === before.status) return summary({ project, role });
+      const after = projectSnapshotSchema.parse({ ...before, name: change.name ?? before.name, status: change.status ?? before.status,
+        propertyType: change.propertyType ?? normalizePropertyType(before.propertyType) });
+      if (after.name === before.name && after.status === before.status && after.propertyType === normalizePropertyType(before.propertyType)) return summary({ project, role });
       const updated = await this.commitVersion(repo, actor, project, after, change.changeReason);
       return summary({ project: updated, role });
     });

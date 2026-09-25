@@ -20,9 +20,9 @@ The public auth routes preserve the provider's success/error shape. Domain APIs 
 | Method | Path | Permission / behavior |
 | --- | --- | --- |
 | GET | `/api/projects?page=1` | Authenticated; only owned/shared projects, 20 per page |
-| POST | `/api/projects` | Authenticated; `{name, propertyType?:"RESIDENTIAL_HOUSE"}`; 201 summary |
+| POST | `/api/projects` | Authenticated; `{name, propertyType?:PropertyType}`; 201 summary |
 | GET | `/api/projects/:projectId` | Project member; summary |
-| PATCH | `/api/projects/:projectId` | OWNER; `{expectedRevision, name?, status?, changeReason}`; 200 updated summary |
+| PATCH | `/api/projects/:projectId` | OWNER; `{expectedRevision, name?, status?, propertyType?, changeReason}`; 200 updated summary |
 | GET | `/api/projects/:projectId/site` | OWNER; current Site record and project revision, or `site: null` when no Site record exists |
 | PUT | `/api/projects/:projectId/site` | OWNER; `{expectedRevision, changeReason, site}` where `site` contains validated Site facts; saves a new immutable project revision when changed |
 | GET | `/api/projects/:projectId/requirements` | OWNER; current interview, structured candidate, completeness, saved Site context, and approved requirements if present |
@@ -43,7 +43,7 @@ Project summary:
 {
   id: string; // UUID
   name: string;
-  propertyType: "RESIDENTIAL_HOUSE";
+  propertyType: "RESIDENTIAL" | "COMMERCIAL" | "MIXED_USE" | "OTHER";
   status: "ACTIVE" | "ARCHIVED";
   revision: number;
   versionId: string;
@@ -52,6 +52,10 @@ Project summary:
   updatedAt: string;
 }
 ```
+
+`PropertyType` has exactly the four values shown above; creation defaults to `RESIDENTIAL`. For compatibility with original clients, creation also accepts deprecated `RESIDENTIAL_HOUSE` and normalizes it to `RESIDENTIAL` before persistence. Unsupported inputs return 422. PATCH accepts only canonical values and uses the existing owner authorization, expected revision, audit, and no-op rules. Summary/list/detail responses always use canonical types; authorized raw history retains the recorded spelling, including legacy `RESIDENTIAL_HOUSE`. No private fields were added to summaries.
+
+The Requirements response additionally includes canonical `propertyType` and `propertyTypeMismatch: {approved:boolean, draft:boolean}`. The approved flag remains true until a matching brief is explicitly approved, even while a corrected draft is open. A historical approved interview retains its `APPROVED` status; the mismatch and completeness fields indicate that it is not aligned with the current project. Drafts obtain building intent from Project Details with `PROJECT_CONTEXT` provenance. The interview cannot change the project type: a conflicting manual kind returns 422; AI type extractions cannot overwrite it. Change Project Details and use the existing `start` action to open a reviewed draft. Non-residential types can be captured but remain ineligible for residential requirements approval.
 
 The Site response is `{projectId, revision, versionId, site}`. The `site` value is the validated Site record with entered facts and deterministic derived analysis. A stale `expectedRevision` returns 409; invalid Site input returns 422. Site values and location history are owner-only, including through the Site endpoints.
 

@@ -91,3 +91,11 @@ Application authorization is currently the isolation boundary; PostgreSQL RLS is
 - [Better Auth session management](https://better-auth.com/docs/concepts/session-management)
 - [Better Auth persistent rate limits and trusted proxy requirements](https://better-auth.com/docs/concepts/rate-limit)
 - [PostgreSQL constraints](https://www.postgresql.org/docs/17/ddl-constraints.html)
+
+## Property-type correction after Phase 3
+
+The authoritative Project Property Type is defined once in `packages/domain/src/property-type.ts`: RESIDENTIAL, COMMERCIAL, MIXED_USE, OTHER. Project input, Requirements building intent, and AI extraction validation reuse that schema without importing the project aggregate into Requirements. Current summaries normalize legacy RESIDENTIAL_HOUSE to RESIDENTIAL. Raw V1/V2/V3 history readers preserve the recorded spelling; normalization only creates an in-memory current representation. New metadata writes retain their snapshot schema version and write canonical property types; Site and Requirements writes retain their existing V2/V3 evolution rules.
+
+Migration 004 transactionally replaces only the legacy property-type check. It accepts the legacy spelling and all four current types, rejects missing/null/non-string/unsupported values, and retains snapshot shape, Site/Requirements, immutable-history and foreign-key validation. No historical snapshot or audit JSON is rewritten. Readiness requires 004; checksums still cover all migrations.
+
+Property-type edits use the existing owner-only project transaction, revision lock, stale-write check, immutable new version and audit. A normalized no-op creates no revision. Approved Requirements remain untouched when project metadata changes. The owner-only Requirements view computes separate draft and approved type mismatches; mismatched briefs cannot be approved as aligned. The owner opens a new interview through the existing controlled workflow, carrying other facts forward for review and deriving only the current high-level type. This does not add Phase 4 planning behavior.
