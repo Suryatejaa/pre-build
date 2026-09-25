@@ -23,6 +23,14 @@ The public auth routes preserve the provider's success/error shape. Domain APIs 
 | POST | `/api/projects` | Authenticated; `{name, propertyType?:"RESIDENTIAL_HOUSE"}`; 201 summary |
 | GET | `/api/projects/:projectId` | Project member; summary |
 | PATCH | `/api/projects/:projectId` | OWNER; `{expectedRevision, name?, status?, changeReason}`; 200 updated summary |
+| GET | `/api/projects/:projectId/site` | OWNER; current Site record and project revision, or `site: null` when no Site record exists |
+| PUT | `/api/projects/:projectId/site` | OWNER; `{expectedRevision, changeReason, site}` where `site` contains validated Site facts; saves a new immutable project revision when changed |
+| GET | `/api/projects/:projectId/requirements` | OWNER; current interview, structured candidate, completeness, saved Site context, and approved requirements if present |
+| PATCH | `/api/projects/:projectId/requirements` | OWNER; `{expectedRevision, changeReason, requirements}`; manually corrects the active candidate without changing the project revision |
+| POST | `/api/projects/:projectId/requirements/interview` | OWNER; `{action:"start",expectedRevision}`, `{action:"message",expectedRevision,content}`, or `{action:"retry",expectedRevision}` |
+| POST | `/api/projects/:projectId/requirements/conflicts` | OWNER; `{expectedRevision,conflictId,resolution}`; explicitly resolves a requirement conflict |
+| POST | `/api/projects/:projectId/requirements/site-discrepancies` | OWNER; `{expectedRevision,discrepancyId,resolution}`; acknowledges the saved Site value without changing Site |
+| POST | `/api/projects/:projectId/requirements/approve` | OWNER; `{expectedRevision}`; creates the next immutable project version when the brief is complete and unblocked |
 | GET | `/api/projects/:projectId/versions?page=1` | OWNER/PROFESSIONAL; immutable history, newest first |
 | GET | `/api/projects/:projectId/versions/:versionId` | OWNER/PROFESSIONAL; version must belong to this project |
 | GET | `/api/projects/:projectId/members` | OWNER; names, IDs and roles, includes derived owner |
@@ -44,6 +52,14 @@ Project summary:
   updatedAt: string;
 }
 ```
+
+The Site response is `{projectId, revision, versionId, site}`. The `site` value is the validated Site record with entered facts and deterministic derived analysis. A stale `expectedRevision` returns 409; invalid Site input returns 422. Site values and location history are owner-only, including through the Site endpoints.
+
+The Requirements response includes the project revision, owner-only Site context (read from the canonical Site record and not copied into the candidate), the latest interview status, conversation messages, structured candidate, completeness items, conflicts, and Site discrepancies. If no interview exists, status is `NOT_STARTED`. Draft messages and candidates are stored separately from immutable project versions. Reopening an approved brief starts a new interview from the latest approved requirements. If the project revision changes during an active interview, start a fresh draft to use the current Site context.
+
+The interview action endpoint accepts only `start`, `message`, and `retry`. Owner messages are persisted before calling the provider. Provider errors return a safe 502/503 envelope while retaining the message and candidate; retry reuses the latest saved owner message. AI output is schema validated and domain validated before it can update a candidate. `PATCH /requirements` accepts the full validated `PropertyRequirements` object; the server stamps manual provenance and preserves earlier provenance history rather than trusting client-provided provenance.
+
+Approval requires all required and conditionally required fields, confirmed interpretations, resolved blocking conflicts, resolved Site discrepancies, and an exact current `expectedRevision`. It writes `requirements` into project snapshot schema V3, appends an audit event in the same transaction, and closes the interview. V1/V2 history remains unchanged. General project summaries never include requirements. PROFESSIONAL and contractor roles cannot read or modify interview drafts or V3 requirements.
 
 Paginated endpoints return `{items, nextPage: number | null}`. `page` ranges from 1 to 10000. IDs must be UUIDs. Name is trimmed and 2–120 characters. `changeReason` is trimmed and 5–500 characters. No-op PATCH retains the same revision. Archiving is reversible; there is no project deletion endpoint. Membership updates use stable account IDs and cannot transfer ownership. Membership changes audit access without creating new property snapshots. There are no approval or contractor-progress endpoints.
 
@@ -67,6 +83,8 @@ Paginated endpoints return `{items, nextPage: number | null}`. `page` ranges fro
 | 409 | Stale `expectedRevision` |
 | 413 | Body too large |
 | 422 | Invalid JSON/schema/unsupported mutation; validation issues may be included |
+| 502 | AI returned malformed structured output after one repair attempt; the owner message remains saved |
+| 503 | AI provider is unconfigured or temporarily unavailable; manual completion and retry remain available |
 | 429 | Authentication rate limit reached |
 | 500 | Unexpected failure; internal details are not returned |
 

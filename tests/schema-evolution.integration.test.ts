@@ -37,5 +37,5 @@ it('upgrades an applied, populated Phase 1 database without rewriting any histor
   expect(history.map(v=>v.snapshot.schemaVersion)).toEqual([2,1,1]);
   expect(history[0]!.snapshot.site?.derived.calculatedArea?.value).toBe('200000000');
   await migrate(pool);
-  expect((await pool.query('SELECT count(*)::int AS count FROM schema_migrations')).rows[0].count).toBe(2);
+  expect((await pool.query('SELECT count(*)::int AS count FROM schema_migrations')).rows[0].count).toBe(3);
 });

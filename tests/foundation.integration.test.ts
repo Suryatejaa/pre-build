@@ -149,7 +149,7 @@ describe('PostgreSQL project workflows', () => {
   });
   it('applies migrations idempotently with tracked checksums', async () => {
     await migrate(pool);
-    expect((await pool.query('SELECT name FROM schema_migrations ORDER BY name')).rows.map(row => row.name)).toEqual(['001_foundation.sql', '002_site_intake.sql']);
+    expect((await pool.query('SELECT name FROM schema_migrations ORDER BY name')).rows.map(row => row.name)).toEqual(['001_foundation.sql', '002_site_intake.sql', '003_property_requirements.sql']);
   });
   it('reports readiness after the required migration has completed', async () => {
     expect(await isDatabaseReady(pool)).toBe(true);

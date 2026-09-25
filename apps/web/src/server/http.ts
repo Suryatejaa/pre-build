@@ -1,6 +1,18 @@
 import { randomUUID } from 'node:crypto';
-import { DomainError, type AuthenticationProvider, type Principal } from '@property/domain';
+import { DomainError, isDomainError, type AuthenticationProvider, type ErrorCode, type Principal } from '@property/domain';
 import { ZodError } from 'zod';
+
+const domainErrorStatus: Record<ErrorCode, number> = {
+  UNAUTHENTICATED: 401,
+  FORBIDDEN: 403,
+  NOT_FOUND: 404,
+  CONFLICT: 409,
+  INVALID_INPUT: 422,
+  PAYLOAD_TOO_LARGE: 413,
+  AI_UNAVAILABLE: 503,
+  AI_PROVIDER_FAILED: 503,
+  AI_INVALID_OUTPUT: 502,
+};
 
 export function json(data: unknown, status = 200) {
   return Response.json(data, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -43,8 +55,8 @@ export async function withErrors(work: () => Promise<Response>) {
     let code = 'INTERNAL_ERROR';
     let message = 'Something went wrong. Please try again.';
     let issues: { path: string; message: string }[] | undefined;
-    if (error instanceof DomainError) {
-      status = { UNAUTHENTICATED: 401, FORBIDDEN: 403, NOT_FOUND: 404, CONFLICT: 409, INVALID_INPUT: 422, PAYLOAD_TOO_LARGE: 413 }[error.code];
+    if (isDomainError(error)) {
+      status = domainErrorStatus[error.code];
       code = error.code; message = error.message;
     } else if (error instanceof ZodError) {
       status = 422; code = 'INVALID_INPUT'; message = 'Please check the supplied information.';

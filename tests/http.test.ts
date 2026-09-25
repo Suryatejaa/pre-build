@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { authenticated, enforceOrigin, readJson, withErrors } from '../apps/web/src/server/http';
 import { readConfig } from '@property/infrastructure/config';
 
@@ -24,6 +24,18 @@ describe('HTTP boundary', () => {
     const response = await withErrors(async () => { throw new Error('database password: secret'); });
     expect(response.status).toBe(500);
     expect(await response.text()).not.toContain('secret');
+  });
+  it('does not trust name or code fields without the domain error brand', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const response = await withErrors(async () => {
+        throw Object.assign(new Error('untrusted error'), { name: 'DomainError', code: 'CONFLICT' });
+      });
+      expect(response.status).toBe(500);
+      expect(await response.json()).toMatchObject({ error: { code: 'INTERNAL_ERROR' } });
+    } finally {
+      log.mockRestore();
+    }
   });
 });
 describe('configuration', () => {

@@ -39,7 +39,7 @@ The current pointer is a deferred composite foreign key `(project_id, current_re
 
 Updates require `expectedRevision` and a human change reason. A transaction locks the project identity, rereads the current snapshot, authorizes the role, checks revision, validates the new snapshot, appends a version, advances the pointer, and inserts audit before commit. Stale clients receive 409. A no-op creates no spurious version. Access mutations take the same project lock, so concurrent writes and revocation share an ordering point. Membership changes are audited against the active version but do not create a property-data revision. Read requests can finish if already in flight when access is revoked; subsequent requests recheck the database.
 
-Audit events preserve actor, action, time, before/after, source, project and version. Current writes are HUMAN only; clients cannot set source or owner. AI/SYSTEM provenance is reserved at the schema boundary but has no implementation. Professional approval is a later explicit workflow, not implied by reading a version or assigning PROFESSIONAL.
+Audit events preserve actor, action, time, before/after, source, project and version. Project and access writes at the Phase 1 baseline were HUMAN; Phase 3 may mark an approved requirements version AI-sourced when a provider assisted, while the owner remains the approving actor. Clients cannot set source or owner. Professional approval is a later explicit workflow, not implied by reading a version or assigning PROFESSIONAL.
 
 ## Permissions and data projection
 
@@ -77,6 +77,8 @@ Application authorization is currently the isolation boundary; PostgreSQL RLS is
 ## Extension rules
 
 - Phase 2 adds typed site/land data and attachment records, with relational `(project_id, version_id)` provenance. New schema versions require explicit readers/upcasters; never rewrite historical snapshots in place.
+- Phase 3 keeps editable interviews, messages and AI usage records in separate owner-linked tables. Only an explicitly approved, validated requirements specification enters project snapshot V3; V1/V2 snapshots are read as-is. Professional history views redact both Site and requirements data.
+- Phase 3 requirements are a typed domain model with stable UUID child references, explicit measurement units, priorities, provenance history, deterministic completeness and conflict checks. Interview text is evidence, never the canonical model.
 - Future site boundaries must admit polygons with coordinate reference systems and explicit units. Do not embed rectangular assumptions in project identity. Add PostGIS only at the geometry repository boundary when spatial queries justify it.
 - Requirements, design, deterministic evaluations, financial records and construction will reference the same project. Stable child IDs and explicit relationships are mandatory; display names never identify rooms, materials, or work items.
 - Generated documents/artifacts consume canonical versioned state. They do not introduce a competing project model.

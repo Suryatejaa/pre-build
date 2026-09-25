@@ -1,10 +1,10 @@
 import type { Pool, PoolClient } from 'pg';
 import {
-  DomainError, PAGE_SIZE, projectSnapshotSchema, roleSchema,
-  type ChangeSource, type MemberRole, type Page, type Principal, type ProjectMember,
-  type ProjectVersion, type PropertyProject,
+  DomainError, PAGE_SIZE, interviewCandidateSchema, interviewMessageSchema, projectSnapshotSchema, roleSchema,
+  type AiRequestRecord, type ChangeSource, type InterviewMessage, type MemberRole, type Page, type Principal, type ProjectMember,
+  type ProjectVersion, type PropertyProject, type RequirementsInterview,
 } from '@property/domain';
-import type { AuditEntry, AuthorizedProject, ProjectRepository, ProjectUnitOfWork } from '@property/services';
+import type { AuditEntry, AuthorizedProject, ProjectRepository, ProjectUnitOfWork, RequirementsRepository, RequirementsUnitOfWork } from '@property/services';
 
 type Connection = Pick<Pool, 'query'>;
 interface VersionRow {
@@ -112,6 +112,50 @@ class PgProjectRepository implements ProjectRepository {
       entry.source, entry.before === null ? null : JSON.stringify(entry.before), entry.after === null ? null : JSON.stringify(entry.after)]);
   }
 }
+interface InterviewRow {
+  id: string; project_id: string; owner_id: string; status: RequirementsInterview['status']; candidate: unknown;
+  expected_project_revision: number; approved_project_version_id: string | null; created_at: Date; updated_at: Date;
+}
+interface InterviewMessageRow {
+  id: string; interview_id: string; role: InterviewMessage['role']; content: string; created_at: Date; provider: string | null; model: string | null;
+}
+class PgRequirementsRepository extends PgProjectRepository implements RequirementsRepository {
+  constructor(private readonly connection: Connection) { super(connection); }
+  async interview(projectId: string): Promise<RequirementsInterview | null> {
+    const result = await this.connection.query<InterviewRow>(`SELECT * FROM requirements_interviews WHERE project_id=$1
+      ORDER BY created_at DESC, id DESC LIMIT 1`, [projectId]);
+    const row = result.rows[0];
+    if (!row) return null;
+    const messages = await this.connection.query<InterviewMessageRow>(`SELECT * FROM requirements_interview_messages WHERE interview_id=$1 ORDER BY sequence_no`, [row.id]);
+    return { id: row.id, projectId: row.project_id, ownerId: row.owner_id, status: row.status,
+      candidate: interviewCandidateSchema.parse(row.candidate), expectedProjectRevision: row.expected_project_revision,
+      approvedProjectVersionId: row.approved_project_version_id, createdAt: row.created_at.toISOString(), updatedAt: row.updated_at.toISOString(),
+      messages: messages.rows.map(message => interviewMessageSchema.parse({ id: message.id, interviewId: message.interview_id, role: message.role,
+        content: message.content, createdAt: message.created_at.toISOString(), provider: message.provider, model: message.model })) };
+  }
+  async createInterview(interview: Omit<RequirementsInterview, 'messages'>) {
+    await this.connection.query(`INSERT INTO requirements_interviews(id,project_id,owner_id,status,candidate,expected_project_revision,approved_project_version_id,created_at,updated_at)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [interview.id, interview.projectId, interview.ownerId, interview.status,
+      JSON.stringify(interview.candidate), interview.expectedProjectRevision, interview.approvedProjectVersionId, interview.createdAt, interview.updatedAt]);
+  }
+  async saveInterview(interview: Omit<RequirementsInterview, 'messages'>) {
+    const result = await this.connection.query(`UPDATE requirements_interviews SET status=$1,candidate=$2,expected_project_revision=$3,
+      approved_project_version_id=$4,updated_at=$5 WHERE id=$6 AND project_id=$7`, [interview.status, JSON.stringify(interview.candidate),
+      interview.expectedProjectRevision, interview.approvedProjectVersionId, interview.updatedAt, interview.id, interview.projectId]);
+    if (result.rowCount !== 1) throw new DomainError('CONFLICT', 'The requirements interview changed. Reload before continuing.');
+  }
+  async appendInterviewMessage(message: InterviewMessage) {
+    const result = await this.connection.query<{ next_sequence: number }>(`SELECT COALESCE(MAX(sequence_no),0)+1 AS next_sequence FROM requirements_interview_messages WHERE interview_id=$1`, [message.interviewId]);
+    await this.connection.query(`INSERT INTO requirements_interview_messages(id,interview_id,sequence_no,role,content,provider,model,created_at)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, [message.id, message.interviewId, result.rows[0]!.next_sequence,
+      message.role, message.content, message.provider, message.model, message.createdAt]);
+  }
+  async recordAiRequest(request: AiRequestRecord) {
+    await this.connection.query(`INSERT INTO requirements_ai_requests(id,interview_id,provider,model,request_type,occurred_at,succeeded,latency_ms,input_tokens,output_tokens,retry_count)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [request.id, request.interviewId, request.provider, request.model, request.requestType,
+      request.occurredAt, request.succeeded, request.latencyMs, request.inputTokens, request.outputTokens, request.retryCount]);
+  }
+}
 export function createProjectUnitOfWork(pool: Pool): ProjectUnitOfWork {
   return {
     read: new PgProjectRepository(pool),
@@ -120,6 +164,21 @@ export function createProjectUnitOfWork(pool: Pool): ProjectUnitOfWork {
       try {
         await client.query('BEGIN');
         const result = await work(new PgProjectRepository(client));
+        await client.query('COMMIT');
+        return result;
+      } catch (error) { await client.query('ROLLBACK'); throw error; }
+      finally { client.release(); }
+    },
+  };
+}
+export function createRequirementsUnitOfWork(pool: Pool): RequirementsUnitOfWork {
+  return {
+    read: new PgRequirementsRepository(pool),
+    async transaction<T>(work: (repo: RequirementsRepository) => Promise<T>): Promise<T> {
+      const client: PoolClient = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const result = await work(new PgRequirementsRepository(client));
         await client.query('COMMIT');
         return result;
       } catch (error) { await client.query('ROLLBACK'); throw error; }

@@ -57,23 +57,23 @@ The browser walkthrough uses a clearly named local validation account and projec
 - Fixed one repository hygiene issue: generated `next-env.d.ts` is now ignored, and typecheck regenerates Next.js types. A clean source copy without `.next` or `next-env.d.ts` passed typecheck. A production build with `DATABASE_URL`, `BETTER_AUTH_SECRET`, and `APP_URL` explicitly empty also passed.
 - Repeated the browser walkthrough at a 390 × 844 viewport: registration, project creation, rename, archive/restore, historical snapshot inspection, access settings, account details, logout, and protected-page redirection. The original snapshot remained intact; project and access pages had no horizontal overflow. This was a local development-browser check, not a physical-device or production-hosting test.
 - Verified ignore rules for dependencies, builds, environment files, local objects, coverage, and TypeScript caches. The repository still has no initial commit; application sources are untracked, and `git diff` is therefore empty. No commit was created during the audit.
-- Phase 1 scope and the original `Plan.md` are preserved. Phase 2 has not started.
+- Phase 1 scope and the original `Plan.md` are preserved. Phase 2 has since been implemented as an additive Land/Site extension; Phase 3 has not started.
 
 ## Known limitations and release gates
 
-1. This completes a foundation, not a publicly launch-ready construction product. No site data, interviews, analyses, calculations, legal assertions, payments, scheduling, or 3D capabilities are implemented.
+1. This completes a foundation with Land/Site intake, not a publicly launch-ready construction product. Interviews, building planning, room or floor-plan design, Vaasthu, cost/compliance analysis, payments, scheduling, and 3D capabilities are not implemented.
 2. Email verification, password recovery, MFA, verified professional identities and invitations remain to be designed before public registration. Email is explicitly marked unverified and never used to grant access. Membership assignment uses an existing account ID.
 3. Authentication throttling is persistent. Project/API abuse quotas, account lifecycle tooling, session/rate-limit cleanup, CSRF browser penetration testing, and broader load/security review remain hardening work. Deploy only behind the configured trusted HTTPS proxy.
-4. Local storage is development-only. Upload/download authorization, document metadata/version links, content sniffing, scanning/quarantine, streaming transfers, private cloud storage and signed URLs belong to land/document intake. No public upload control is exposed today.
+4. Local storage is development-only. Land/Site has attachment metadata contracts, but no upload/download endpoint, content sniffing, scanning/quarantine, streaming transfer, private cloud storage, or signed URL workflow. No public upload control is exposed.
 5. Job contracts have no queue/worker implementation because there is no Phase 1 consumer. A durable outbox, retries, cancellation, idempotent processing and payment gating are required before any paid/background generation.
 6. Ownership transfer and destructive deletion are intentionally unsupported. Archive/restore preserves history. The access UI is a foundation, not the later contractor product.
-7. Current snapshots contain only Phase 1 metadata. Adding fields requires schema-version evolution and authorization review; professional history access must not unintentionally expose future private owner/financial data.
+7. Phase 1 V1 snapshots remain readable and unchanged; current Site data uses V2 snapshots. Site details and Site change notes are redacted from professional history. Further snapshot fields still require schema-version evolution and authorization review, especially for private owner or financial data.
 8. PostgreSQL RLS, managed database backups/restore drills, runtime SQL-role provisioning, production secrets, TLS hosting, observability, retention/deletion policy and incident operations remain deployment work. Audit is transactional and append-only to application writes, not cryptographically tamper-evident.
-9. No PostGIS, polygon validation, full project approval workflow, document artifacts or event-driven notifications are implemented. Their boundaries are documented; absent systems are not represented by fake adapters.
+9. Site supports deterministic rectangular and irregular polygon validation without PostGIS. PostGIS, full project approval, uploaded document artifacts, and event-driven notifications are not implemented; absent systems are not represented by fake adapters.
 10. CI configuration is supplied but has only been exercised through its equivalent commands locally until the repository is pushed to a CI host.
 
-## Recommended Phase 2 starting point
+## Phase 2 status — Land/Site intake
 
-First define a typed Site/Land schema attached to the existing project and explicit units/coordinate reference system. Support rectangular input without excluding polygon boundaries. Introduce a new snapshot schema version with backward readers and tests preserving V1 history. Then add document metadata keyed to project/version, controlled upload and download services using `ObjectStorage`, file validation/quarantine, and a focused land-intake UI. Keep permissions, transaction semantics and audit provenance consistent with Phase 1.
+Phase 2 adds typed Site/Land facts and deterministic geometry analysis to the existing versioned project record. It supports rectangular and irregular boundaries, exact unit conversion, separate declared and calculated area, orientation, road relationships, owner-only editing, and private Site history redaction. V1 history remains unchanged and readable alongside V2 snapshots.
 
-Do not begin Phase 2 until explicitly authorized.
+Attachment support is limited to metadata/contracts; secure file upload, scanning, and download remain deferred. Phase 3 has not started.
