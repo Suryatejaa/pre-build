@@ -60,6 +60,8 @@ it('maps stale project and Site writes from an earlier module copy to HTTP 409',
 
   expect(current.pool).toBe(first.pool);
   expect(current.projects).not.toBe(first.projects);
+  expect(current.requirements).not.toBe(first.requirements);
+  expect(currentAgain.requirements).toBe(current.requirements);
   expect(currentAgain.projects).toBe(current.projects);
   expect(projectResponse.status).toBe(409);
   expect(await projectResponse.json()).toMatchObject({ error: { code: 'CONFLICT' } });

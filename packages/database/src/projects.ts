@@ -151,9 +151,9 @@ class PgRequirementsRepository extends PgProjectRepository implements Requiremen
       message.role, message.content, message.provider, message.model, message.createdAt]);
   }
   async recordAiRequest(request: AiRequestRecord) {
-    await this.connection.query(`INSERT INTO requirements_ai_requests(id,interview_id,provider,model,request_type,occurred_at,succeeded,latency_ms,input_tokens,output_tokens,retry_count)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [request.id, request.interviewId, request.provider, request.model, request.requestType,
-      request.occurredAt, request.succeeded, request.latencyMs, request.inputTokens, request.outputTokens, request.retryCount]);
+    await this.connection.query(`INSERT INTO requirements_ai_requests(id,interview_id,provider,model,request_type,occurred_at,succeeded,latency_ms,input_tokens,output_tokens,retry_count,attempts,routing_outcome)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, [request.id, request.interviewId, request.provider, request.model, request.requestType,
+      request.occurredAt, request.succeeded, request.latencyMs, request.inputTokens, request.outputTokens, request.retryCount, JSON.stringify(request.attempts), request.routingOutcome]);
   }
 }
 export function createProjectUnitOfWork(pool: Pool): ProjectUnitOfWork {

@@ -23,9 +23,9 @@ describe('provider adapter boundary', () => {
     await expect(unavailable.generateText({ systemPrompt: 'safe', input: {} })).rejects.toThrow('AI provider request failed.');
   });
 
-  it('selects a provider only when all configuration values are present', () => {
+  it('skips uncredentialed slots and validates credentialed configuration', () => {
     expect(configuredRequirementsAiProvider({ NODE_ENV: 'test' })).toBeNull();
-    expect(() => configuredRequirementsAiProvider({ NODE_ENV: 'test', AI_PROVIDER_URL: 'https://ai.example/v1' })).toThrow('Configure AI_PROVIDER_URL');
+    expect(configuredRequirementsAiProvider({ NODE_ENV: 'test', AI_PROVIDER_URL: 'https://ai.example/v1' })).toBeNull();
     expect(configuredRequirementsAiProvider({ NODE_ENV: 'test', AI_PROVIDER_URL: 'http://localhost:1234/v1', AI_PROVIDER_API_KEY: 'test', AI_PROVIDER_MODEL: 'fake' })).not.toBeNull();
     expect(() => configuredRequirementsAiProvider({ NODE_ENV: 'production', AI_PROVIDER_URL: 'http://ai.example/v1', AI_PROVIDER_API_KEY: 'test', AI_PROVIDER_MODEL: 'model' })).toThrow('must use HTTPS');
   });

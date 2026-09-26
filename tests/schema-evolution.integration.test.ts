@@ -44,11 +44,25 @@ describe.each([1, 2, 3])('populated Phase %i upgrade', phase => {
       }
       await client.query('COMMIT');
     } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+    let legacyAiRequestId: string | undefined;
+    if (phase === 3) {
+      const interviewId = randomUUID(); legacyAiRequestId = randomUUID();
+      await pool.query(`INSERT INTO requirements_interviews(id,project_id,owner_id,status,candidate,expected_project_revision,created_at,updated_at)
+        VALUES($1,$2,$3,'IN_PROGRESS',$4,3,now(),now())`, [interviewId, projectId, owner.userId, { requirements: emptyPropertyRequirements(), questions: [], conflicts: [], siteDiscrepancies: [], lastAiError: null, lastOwnerMessageId: null }]);
+      await pool.query(`INSERT INTO requirements_ai_requests(id,interview_id,provider,model,request_type,occurred_at,succeeded,latency_ms,input_tokens,output_tokens,retry_count)
+        VALUES($1,$2,'historical-provider','historical-model','INTERPRET_OWNER_MESSAGE',now(),true,20,5,0,1)`, [legacyAiRequestId, interviewId]);
+    }
+    const legacyAi = legacyAiRequestId ? (await pool.query('SELECT row_to_json(r) AS value FROM requirements_ai_requests r WHERE id=$1', [legacyAiRequestId])).rows[0].value : null;
     const versions = (await pool.query('SELECT row_to_json(v)::text AS value FROM project_versions v ORDER BY revision')).rows;
     const audit = (await pool.query('SELECT row_to_json(a)::text AS value FROM audit_events a ORDER BY occurred_at,id')).rows;
     expect(await isDatabaseReady(pool)).toBe(false);
     await migrate(pool);
     expect(await isDatabaseReady(pool)).toBe(true);
+    if (legacyAiRequestId) {
+      const upgradedAi = (await pool.query('SELECT row_to_json(r) AS value FROM requirements_ai_requests r WHERE id=$1', [legacyAiRequestId])).rows[0].value;
+      expect(upgradedAi).toEqual({ ...legacyAi, attempts: [], routing_outcome: 'LEGACY' });
+    }
+
     expect((await pool.query('SELECT row_to_json(v)::text AS value FROM project_versions v ORDER BY revision')).rows).toEqual(versions);
     expect((await pool.query('SELECT row_to_json(a)::text AS value FROM audit_events a ORDER BY occurred_at,id')).rows).toEqual(audit);
     const service = new ProjectService(createProjectUnitOfWork(pool), randomUUID, () => new Date());
@@ -72,7 +86,7 @@ describe.each([1, 2, 3])('populated Phase %i upgrade', phase => {
         VALUES($1,$2,$3,$4,$5,$6,'HUMAN','Invalid property type test')`, [randomUUID(), projectId, phase + 2, snapshot.schemaVersion, snapshot, owner.userId])).rejects.toMatchObject({ code: '23514', constraint: 'project_versions_property_type' });
     }
     await migrate(pool);
-    expect((await pool.query('SELECT count(*)::int AS count FROM schema_migrations')).rows[0].count).toBe(4);
+    expect((await pool.query('SELECT count(*)::int AS count FROM schema_migrations')).rows[0].count).toBe(5);
     await pool.query('UPDATE schema_migrations SET checksum=$1 WHERE name=$2', ['test-corrupted-checksum', '004_project_property_types.sql']);
     await expect(migrate(pool)).rejects.toThrow('Applied migration changed');
   });

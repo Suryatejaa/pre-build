@@ -3,7 +3,13 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { propertyTypeSchema, propertyTypeLabel, type PropertyType, type ProjectMember, type ProjectRole } from "@property/domain";
+import {
+  propertyTypeSchema,
+  propertyTypeLabel,
+  type PropertyType,
+  type ProjectMember,
+  type ProjectRole,
+} from "@property/domain";
 
 async function mutate(url: string, method: string, data?: unknown) {
   const response = await fetch(url, {
@@ -40,6 +46,7 @@ export function AuthForm({ mode }: { mode: "sign-in" | "sign-up" }) {
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   const signup = mode === "sign-up";
+  const [showPassword, setShowPassword] = useState(false);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
@@ -88,7 +95,7 @@ export function AuthForm({ mode }: { mode: "sign-in" | "sign-up" }) {
         Password
         <input
           name="password"
-          type="password"
+          type={showPassword ? "text" : "password"}
           autoComplete={signup ? "new-password" : "current-password"}
           required
           minLength={signup ? 12 : 1}
@@ -97,30 +104,20 @@ export function AuthForm({ mode }: { mode: "sign-in" | "sign-up" }) {
         />
       </label>
       {/* show password checkbox on same line */}
-      {signup && (
-        <label className="checkbox">
-          <input
-            type="checkbox"
-            onChange={(e) => {
-              const passwordInput = document.querySelector<HTMLInputElement>(
-                'input[name="password"]',
-              );
-
-              if (passwordInput) {
-                passwordInput.type = e.currentTarget.checked
-                  ? "text"
-                  : "password";
-              }
-            }}
-          />
-          <span>Show password</span>
-        </label>
-      )}
+      <label className="checkbox">
+        <input
+          type="checkbox"
+          checked={showPassword}
+          onChange={(event) => setShowPassword(event.target.checked)}
+        />
+        <span>Show password</span>
+      </label>
       {signup && (
         <p id="password-help" className="help">
           Use at least 12 characters. A memorable passphrase works well.
         </p>
       )}
+
       <Feedback error={error} />
       <button className="button primary full" disabled={pending}>
         {pending ? "Please wait…" : signup ? "Create your account" : "Sign in"}
@@ -164,18 +161,33 @@ export function SignOutButton() {
     </div>
   );
 }
-function PropertyTypeField({ value = "RESIDENTIAL" }: { value?: PropertyType }) {
+function PropertyTypeField({
+  value = "RESIDENTIAL",
+}: {
+  value?: PropertyType;
+}) {
   const [selected, setSelected] = useState<string>(value);
   return (
     <div className="field-display">
       <label>
         Property type
-        <select name="propertyType" defaultValue={value} onChange={event => setSelected(event.target.value)} aria-describedby="property-type-help">
-          {propertyTypeSchema.options.map(type => <option key={type} value={type}>{type === "OTHER" ? "Other" : propertyTypeLabel(type)}</option>)}
+        <select
+          name="propertyType"
+          defaultValue={value}
+          onChange={(event) => setSelected(event.target.value)}
+          aria-describedby="property-type-help"
+        >
+          {propertyTypeSchema.options.map((type) => (
+            <option key={type} value={type}>
+              {type === "OTHER" ? "Other" : propertyTypeLabel(type)}
+            </option>
+          ))}
         </select>
       </label>
       <p id="property-type-help" className="help">
-        {selected === "RESIDENTIAL" ? "A dedicated project record for your home." : "You can create this project and record requirements. Advanced planning support is limited; requirements approval currently supports residential projects only."}
+        {selected === "RESIDENTIAL"
+          ? "A dedicated project record for your home."
+          : "You can create this project and record requirements. Advanced planning support is limited; requirements approval currently supports residential projects only."}
       </p>
     </div>
   );
@@ -287,7 +299,10 @@ export function EditProjectForm({
         />
       </label>
       <PropertyTypeField value={project.propertyType} />
-      <p className="help">After changing the property type, review Requirements in a new draft. Previously approved briefs remain in history.</p>
+      <p className="help">
+        After changing the property type, review Requirements in a new draft.
+        Previously approved briefs remain in history.
+      </p>
       <label>
         Project status
         <select name="status" defaultValue={project.status}>

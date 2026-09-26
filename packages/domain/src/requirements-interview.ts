@@ -46,6 +46,27 @@ export interface RequirementsInterview {
   updatedAt: string;
   messages: InterviewMessage[];
 }
+export type AiFailureCode = 'TIMEOUT' | 'CONNECTION' | 'RATE_LIMIT' | 'UNAVAILABLE' | 'AUTHENTICATION' | 'CONFIGURATION' | 'INVALID_REQUEST' | 'INVALID_OUTPUT' | 'UNKNOWN';
+export type AiRoutingOutcome = 'PRIMARY_USED' | 'FALLBACK_USED' | 'ALL_PROVIDERS_FAILED' | 'OPERATOR_ERROR' | 'NOT_CONFIGURED';
+export type AiPipelineStage = 'PROVIDER_REQUEST' | 'RESPONSE_BODY' | 'RESPONSE_ENVELOPE' | 'JSON_PARSE' | 'EXTRACTION_SCHEMA' | 'CANDIDATE_MERGE' | 'DOMAIN_VALIDATION' | 'CONFLICT_EVALUATION' | 'ASSISTANT_TEXT' | 'PERSISTENCE';
+export interface AiPipelineDiagnostic { stage: AiPipelineStage; outcome: 'PASSED' | 'FAILED' | 'RECOVERED' | 'CONFLICTS_FOUND'; issues?: string[] }
+/** Allowlisted diagnostics only: no prompts, response bodies, credentials or reasoning. */
+export interface AiProviderAttempt {
+  provider: string;
+  model: string;
+  providerIndex: number;
+  occurredAt: string;
+  succeeded: boolean;
+  latencyMs: number;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  retryCount: number;
+  errorCode: AiFailureCode | null;
+  failureStage?: AiPipelineStage;
+  httpStatus?: number;
+  validationIssues?: string[];
+  pipeline?: AiPipelineDiagnostic[];
+}
 export interface AiRequestRecord {
   id: string;
   interviewId: string;
@@ -58,8 +79,11 @@ export interface AiRequestRecord {
   inputTokens: number | null;
   outputTokens: number | null;
   retryCount: number;
+  attempts: AiProviderAttempt[];
+  routingOutcome: AiRoutingOutcome;
 }
 export interface RequirementsInterviewView {
+  aiAvailability: 'AVAILABLE' | 'NOT_CONFIGURED';
   projectId: string;
   projectRevision: number;
   propertyType: PropertyType;

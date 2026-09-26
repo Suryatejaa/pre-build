@@ -24,6 +24,10 @@ Open [http://localhost:3000](http://localhost:3000), create an account, and crea
 
 The app uses a root `.env`, loaded by `apps/web/scripts/next.mjs`. Existing environment variables take precedence. Storage paths in that launcher are resolved from the repository root. `.env.example` uses `.data/objects`; storage is not exposed publicly. Changing the runtime configuration requires restarting the app.
 
+## Requirements interview AI
+
+Set `SARVAM_API_KEY` in the root `.env` and restart the app to use Sarvam 105B as the primary interview provider. No source-code change or fallback key is required. Apply database migrations before running this version. Without credentials, the manual Project Brief remains available. Optional ordered fallbacks and the recovery policy are documented in [Phase 3 provider configuration](docs/phase-3.md#configuration); `.env.example` contains the server-only variable names.
+
 ## Validate
 
 Create the separate local test database once:

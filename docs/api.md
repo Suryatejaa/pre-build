@@ -59,7 +59,7 @@ The Requirements response additionally includes canonical `propertyType` and `pr
 
 The Site response is `{projectId, revision, versionId, site}`. The `site` value is the validated Site record with entered facts and deterministic derived analysis. A stale `expectedRevision` returns 409; invalid Site input returns 422. Site values and location history are owner-only, including through the Site endpoints.
 
-The Requirements response includes the project revision, owner-only Site context (read from the canonical Site record and not copied into the candidate), the latest interview status, conversation messages, structured candidate, completeness items, conflicts, and Site discrepancies. If no interview exists, status is `NOT_STARTED`. Draft messages and candidates are stored separately from immutable project versions. Reopening an approved brief starts a new interview from the latest approved requirements. If the project revision changes during an active interview, start a fresh draft to use the current Site context.
+The Requirements response includes `aiAvailability` (`AVAILABLE` or `NOT_CONFIGURED`, configuration status only), the project revision, owner-only Site context (read from the canonical Site record and not copied into the candidate), the latest interview status, conversation messages, structured candidate, completeness items, conflicts, and Site discrepancies. If no interview exists, status is `NOT_STARTED`. Draft messages and candidates are stored separately from immutable project versions. Reopening an approved brief starts a new interview from the latest approved requirements. If the project revision changes during an active interview, start a fresh draft to use the current Site context.
 
 The interview action endpoint accepts only `start`, `message`, and `retry`. Owner messages are persisted before calling the provider. Provider errors return a safe 502/503 envelope while retaining the message and candidate; retry reuses the latest saved owner message. AI output is schema validated and domain validated before it can update a candidate. `PATCH /requirements` accepts the full validated `PropertyRequirements` object; the server stamps manual provenance and preserves earlier provenance history rather than trusting client-provided provenance.
 
@@ -87,7 +87,7 @@ Paginated endpoints return `{items, nextPage: number | null}`. `page` ranges fro
 | 409 | Stale `expectedRevision` |
 | 413 | Body too large |
 | 422 | Invalid JSON/schema/unsupported mutation; validation issues may be included |
-| 502 | AI returned malformed structured output after one repair attempt; the owner message remains saved |
+| 502 | AI returned malformed structured output after one repair attempt per configured provider; the owner message remains saved |
 | 503 | AI provider is unconfigured or temporarily unavailable; manual completion and retry remain available |
 | 429 | Authentication rate limit reached |
 | 500 | Unexpected failure; internal details are not returned |

@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createProjectUnitOfWork, createRequirementsUnitOfWork } from '@property/database';
 import { migrate } from '@property/database/migrate';
 import { propertyTypeSchema } from '@property/domain';
-import { FakeRequirementsAiProvider, ProjectService, RequirementsInterviewService, type StructuredAiRequest } from '@property/services';
+import { AiProviderRouter, FakeRequirementsAiProvider, ProjectService, RequirementsInterviewService, type StructuredAiRequest } from '@property/services';
 import { createProjectApi } from '../apps/web/src/server/project-api';
 
 const connectionString = process.env.TEST_DATABASE_URL;
@@ -16,7 +16,7 @@ const projects = new ProjectService(createProjectUnitOfWork(pool), randomUUID, (
 const owner = { userId: randomUUID() }, member = { userId: randomUUID() }, stranger = { userId: randomUUID() };
 const fake = new FakeRequirementsAiProvider();
 let lastRequest: StructuredAiRequest | undefined;
-const interviews = new RequirementsInterviewService(createRequirementsUnitOfWork(pool), {
+const interviews = new RequirementsInterviewService(createRequirementsUnitOfWork(pool), new AiProviderRouter([{
   metadata: fake.metadata,
   async generateStructured(request) {
     lastRequest = request;
@@ -26,7 +26,7 @@ const interviews = new RequirementsInterviewService(createRequirementsUnitOfWork
     return result;
   },
   generateText: request => fake.generateText(request),
-}, randomUUID, () => new Date());
+}]), randomUUID, () => new Date());
 const origin = 'http://localhost:3000';
 const request = (method: string, body?: unknown) => new Request(`${origin}/api/projects`, { method,
   headers: { origin, 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });

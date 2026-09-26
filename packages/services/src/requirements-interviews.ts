@@ -3,13 +3,14 @@ import {
   requirementsWithProjectType, requirementsMatchProjectType, propertyTypeLabel, DomainError, emptyPropertyRequirements, idSchema, interviewCandidateSchema,
   normalizeProjectSnapshot, propertyRequirementsSchema, requirementsCompleteness, detectRequirementConflicts,
   stableJson, withRequirements, type InterviewCandidate, type InterviewMessage, type PropertyRequirements,
-  type RequirementProvenance, type RequirementsInterview, type RequirementsInterviewView, type Site, type SiteDiscrepancy,
+  type AiPipelineDiagnostic, type AiPipelineStage, type AiProviderAttempt, type AiRoutingOutcome, type RequirementProvenance, type RequirementsInterview, type RequirementsInterviewView, type Site, type SiteDiscrepancy,
 } from '@property/domain';
 import type { RequirementsRepository, RequirementsUnitOfWork } from './repository';
 import {
   AiInvalidOutputError, AiUnavailableError, requirementsInterviewSystemPrompt,
-  requirementsAiResponseSchema, type RequirementsAiProvider, type RequirementsAiResponse,
+  requirementsAiResponseSchema, parseRequirementsExtraction, aiValidationIssues, type RequirementsAiResponse,
 } from './requirements-ai';
+import { AiRoutingError, aiUsageTotals, type RequirementsAiRouter } from './ai-router';
 
 const startSchema = z.strictObject({ expectedRevision: z.number().int().positive() });
 const ownerMessageSchema = z.strictObject({ content: z.string().trim().min(1).max(4000), expectedRevision: z.number().int().positive() });
@@ -48,7 +49,7 @@ function containsLowConfidence(value: unknown): boolean {
   return false;
 }
 function requiredQuestions(requirements: PropertyRequirements) {
-  return requirementsCompleteness(requirements).blockingItems.map(item => item.prompt);
+  return requirementsCompleteness(requirements).blockingItems.slice(0, 2).map(item => item.prompt);
 }
 function candidateWithStatus(candidate: InterviewCandidate): { candidate: InterviewCandidate; status: 'IN_PROGRESS' | 'REVIEW_REQUIRED' } {
   const blockingConflicts = candidate.conflicts.some(conflict => conflict.status === 'OPEN')
@@ -147,7 +148,7 @@ function addFact(requirements: PropertyRequirements, response: RequirementsAiRes
         break;
       case 'SPACE': {
         if (fact.type === 'OTHER' && !fact.customName) break;
-        const old = next.spaces.find(space => space.type === fact.type && space.customName === fact.customName);
+        const old = next.spaces.find(space => space.type === fact.type && space.customName === fact.customName && space.floor.kind === fact.floor.kind && (!('label' in space.floor) || ('label' in fact.floor && space.floor.label.toLowerCase() === fact.floor.label.toLowerCase())));
         const entry = { id: old?.id ?? id(), type: fact.type, customName: fact.customName, count: mergeCount(old?.count ?? {}, fact.count, correction), floor: fact.floor, size: fact.size, priority: fact.priority, provenance: priorHistory(old?.provenance, source) };
         if (old) next.spaces = next.spaces.map(space => space.id === old.id ? entry : space); else next.spaces.push(entry);
         break;
@@ -214,7 +215,7 @@ function addFact(requirements: PropertyRequirements, response: RequirementsAiRes
       }
     }
   }
-  return propertyRequirementsSchema.parse(next);
+  return next;
 }
 
 function addSiteDiscrepancies(existing: SiteDiscrepancy[], claims: RequirementsAiResponse['siteClaims'], site: Site | null, messageId: string, id: () => string) {
@@ -262,9 +263,10 @@ function preserveManualProvenance(nextValue: unknown, previousValue: unknown, ac
 export class RequirementsInterviewService {
   constructor(
     private readonly uow: RequirementsUnitOfWork,
-    private readonly aiProvider: RequirementsAiProvider | null,
+    private readonly aiProvider: RequirementsAiRouter | null,
     private readonly id: () => string,
     private readonly now: () => Date,
+    private readonly diagnose: (event: { interviewId: string; stage: AiPipelineStage; attempts: AiProviderAttempt[] }) => void = () => {},
   ) {}
 
   private async authorized(repo: RequirementsRepository, actor: { userId: string }, projectId: string, lock = false) {
@@ -297,7 +299,7 @@ export class RequirementsInterviewService {
       completeness.items.push(item); completeness.blockingItems.push(item); completeness.complete = false;
     }
     return { projectId: project.id, projectRevision: project.currentRevision, versionId: project.currentVersion.id,
-      propertyType: snapshot.propertyType, propertyTypeMismatch,
+      propertyType: snapshot.propertyType, propertyTypeMismatch, aiAvailability: this.aiProvider?.available ? 'AVAILABLE' : 'NOT_CONFIGURED',
       status: interview?.status ?? 'NOT_STARTED', siteContext: siteContext(site), approvedRequirements: reqs,
       interview, completeness };
   }
@@ -448,9 +450,13 @@ export class RequirementsInterviewService {
     if (!ownerMessage) throw new DomainError('CONFLICT', 'The saved owner message is unavailable.');
     const snapshot = normalizeProjectSnapshot(project.currentVersion.snapshot);
     const site = snapshot.site;
-    if (!this.aiProvider) return this.persistAiFailure(actorId, projectId, interview, project, new AiUnavailableError(), 0, 0, 0, 0);
+    if (!this.aiProvider) return this.persistAiFailure(actorId, projectId, interview, project, new AiUnavailableError(), 0, [], 'NOT_CONFIGURED');
     const startTime = Date.now();
-    let retries = 0, inputTokens = 0, outputTokens = 0, rawOutput: unknown;
+    let attempts: AiProviderAttempt[] = [];
+    let routingOutcome: AiRoutingOutcome = 'ALL_PROVIDERS_FAILED';
+    let stage: AiPipelineStage = 'PROVIDER_REQUEST';
+    const pipeline: AiPipelineDiagnostic[] = [];
+    const passed = (completed: AiPipelineStage, outcome: AiPipelineDiagnostic['outcome'] = 'PASSED') => { pipeline.push({ stage: completed, outcome }); };
     try {
       const requestBase = {
         systemPrompt: requirementsInterviewSystemPrompt,
@@ -458,53 +464,68 @@ export class RequirementsInterviewService {
         schemaName: 'property_requirements_interview_turn',
         schema: z.toJSONSchema(requirementsAiResponseSchema) as Record<string, unknown>,
       };
-      let result = await this.aiProvider.generateStructured(requestBase);
-      rawOutput = result.output; inputTokens += result.usage?.inputTokens ?? 0; outputTokens += result.usage?.outputTokens ?? 0;
-      let parsed = requirementsAiResponseSchema.safeParse(result.output);
-      if (!parsed.success) {
-        retries = 1;
-        result = await this.aiProvider.generateStructured({ ...requestBase, repairOutput: rawOutput });
-        rawOutput = result.output; inputTokens += result.usage?.inputTokens ?? 0; outputTokens += result.usage?.outputTokens ?? 0;
-        parsed = requirementsAiResponseSchema.safeParse(result.output);
-      }
-      if (!parsed.success) throw new AiInvalidOutputError(rawOutput);
-      const generated = parsed.data;
-      return this.uow.transaction(async repo => {
+      const result = await this.aiProvider.generateStructured(requestBase, parseRequirementsExtraction);
+      attempts = result.attempts; routingOutcome = result.routingOutcome;
+      // Revalidate at the use-case boundary even if another router implementation is injected.
+      stage = 'EXTRACTION_SCHEMA';
+      const generated = requirementsAiResponseSchema.parse(result.output.response);
+      passed(stage);
+      if (attempts.length) attempts[attempts.length - 1] = { ...attempts.at(-1)!, pipeline };
+      return await this.uow.transaction(async repo => {
         const currentProject = await this.authorized(repo, { userId: actorId }, projectId, true);
         if (currentProject.currentRevision !== interview.expectedProjectRevision) throw new DomainError('CONFLICT', 'The project changed while the assistant was working. Refresh the Requirements page.');
         const current = await repo.interview(projectId);
         if (!current || current.id !== interview.id || current.candidate.lastOwnerMessageId !== ownerMessage.id) throw new DomainError('CONFLICT', 'A newer message was submitted. Refresh the Requirements page.');
-        const requirements = requirementsWithProjectType(addFact(current.candidate.requirements, generated, actorId, ownerMessage.id, ownerMessage.content, this.id), snapshot.propertyType);
+        stage = 'CANDIDATE_MERGE';
+        const merged = addFact(current.candidate.requirements, generated, actorId, ownerMessage.id, ownerMessage.content, this.id);
+        passed(stage);
+        stage = 'DOMAIN_VALIDATION';
+        const requirements = requirementsWithProjectType(propertyRequirementsSchema.parse(merged), snapshot.propertyType);
+        passed(stage);
+        stage = 'CONFLICT_EVALUATION';
         const detected = detectRequirementConflicts(requirements, current.candidate.requirements, { messageId: ownerMessage.id, explicitCorrection: generated.explicitCorrection || isClearCorrection(ownerMessage.content), id: this.id });
         const conflicts = mergeConflicts(current.candidate.conflicts, detected);
         const siteDiscrepancies = addSiteDiscrepancies(current.candidate.siteDiscrepancies, generated.siteClaims, site, ownerMessage.id, this.id);
         const lowQuestions = containsLowConfidence(requirements) ? ['Please confirm any low-confidence details in the Project Brief before approval.'] : [];
         // Follow-ups come from deterministic missing fields; provider questions must not
         // re-ask known canonical context or claim unsupported planning completeness.
-        const questions = [...new Set([...requiredQuestions(requirements), ...lowQuestions])].slice(0, 12);
+        const questions = [...new Set([...requiredQuestions(requirements), ...lowQuestions])].slice(0, 2);
         const candidate = interviewCandidateSchema.parse({ ...current.candidate, requirements, conflicts, siteDiscrepancies, questions, lastAiError: null });
         const state = candidateWithStatus(candidate);
+        passed(stage, conflicts.some(item => item.status === 'OPEN') || siteDiscrepancies.some(item => item.status === 'OPEN') ? 'CONFLICTS_FOUND' : 'PASSED');
+        stage = 'ASSISTANT_TEXT';
+        const acknowledgement = generated.extractions.length ? 'I’ve updated the draft with your requirements. Please review the Project Brief.' : 'I couldn’t identify a new requirement from that message.';
+        const reply = [acknowledgement, ...questions].join('\n\n');
+        passed(stage, result.output.textRecovered ? 'RECOVERED' : 'PASSED');
         const timestamp = this.now().toISOString();
         const assistantMessage: InterviewMessage = { id: this.id(), interviewId: current.id, role: 'ASSISTANT', content: generated.extractions.some(fact => fact.category === 'BUILDING_INTENT' && fact.value !== snapshot.propertyType)
-          ? `The project type is ${propertyTypeLabel(snapshot.propertyType)}. To change it, update Project Details and start a fresh requirements draft. Other details from this message have been recorded.` : generated.assistantMessage, createdAt: timestamp, provider: this.aiProvider!.metadata.provider, model: this.aiProvider!.metadata.model };
+          ? `The project type is ${propertyTypeLabel(snapshot.propertyType)}. To change it, update Project Details and start a fresh requirements draft. Other details from this message have been recorded.` : reply, createdAt: timestamp, provider: result.metadata.provider, model: result.metadata.model };
         const updated = { ...current, candidate: state.candidate, status: state.status, updatedAt: timestamp };
+        stage = 'PERSISTENCE';
         await repo.appendInterviewMessage(assistantMessage); await repo.saveInterview(updated);
-        await repo.recordAiRequest({ id: this.id(), interviewId: current.id, provider: this.aiProvider!.metadata.provider, model: this.aiProvider!.metadata.model,
+        passed(stage);
+        await repo.recordAiRequest({ id: this.id(), interviewId: current.id, provider: result.metadata.provider, model: result.metadata.model,
           requestType: 'INTERPRET_OWNER_MESSAGE', occurredAt: timestamp, succeeded: true, latencyMs: Date.now() - startTime,
-          inputTokens: inputTokens || null, outputTokens: outputTokens || null, retryCount: retries });
+          ...aiUsageTotals(attempts), attempts, routingOutcome });
         return this.view(currentProject, { ...updated, messages: [...current.messages, assistantMessage] });
       });
     } catch (error) {
       if (error instanceof DomainError && error.code === 'CONFLICT') throw error;
-      return this.persistAiFailure(actorId, projectId, interview, project, error, Date.now() - startTime, inputTokens, outputTokens, retries);
+      if (error instanceof AiRoutingError) { attempts = error.attempts; routingOutcome = error.routingOutcome; stage = attempts.at(-1)?.failureStage ?? stage; }
+      else {
+        if (pipeline.at(-1)?.stage === stage) pipeline.pop();
+        pipeline.push({ stage, outcome: 'FAILED', issues: aiValidationIssues(error) });
+      }
+      this.diagnose({ interviewId: interview.id, stage, attempts });
+      return this.persistAiFailure(actorId, projectId, interview, project, error, Date.now() - startTime, attempts, routingOutcome);
     }
   }
-  private async persistAiFailure(actorId: string, projectId: string, interview: RequirementsInterview, _project: { id: string; currentRevision: number; currentVersion: { id: string; snapshot: unknown } }, error: unknown, latencyMs: number, inputTokens: number, outputTokens: number, retryCount: number): Promise<never> {
+  private async persistAiFailure(actorId: string, projectId: string, interview: RequirementsInterview, _project: { id: string; currentRevision: number; currentVersion: { id: string; snapshot: unknown } }, error: unknown, latencyMs: number, attempts: AiProviderAttempt[], routingOutcome: AiRoutingOutcome): Promise<never> {
     let code: InterviewCandidate['lastAiError'] = 'AI_PROVIDER_FAILED';
-    if (error instanceof AiUnavailableError) code = 'AI_UNAVAILABLE';
-    else if (error instanceof AiInvalidOutputError || error instanceof z.ZodError) code = 'AI_INVALID_OUTPUT';
-    const provider = this.aiProvider?.metadata.provider ?? 'unconfigured';
-    const model = this.aiProvider?.metadata.model ?? 'unconfigured';
+    if (error instanceof AiUnavailableError || routingOutcome === 'NOT_CONFIGURED') code = 'AI_UNAVAILABLE';
+    else if (error instanceof AiInvalidOutputError || error instanceof z.ZodError || attempts.at(-1)?.errorCode === 'INVALID_OUTPUT') code = 'AI_INVALID_OUTPUT';
+    const provider = attempts.at(-1)?.provider ?? 'unconfigured';
+    const model = attempts.at(-1)?.model ?? 'unconfigured';
     await this.uow.transaction(async repo => {
       await this.authorized(repo, { userId: actorId }, projectId, true);
       const current = await repo.interview(projectId);
@@ -512,8 +533,8 @@ export class RequirementsInterviewService {
       const candidate = interviewCandidateSchema.parse({ ...current.candidate, lastAiError: code });
       const updated = { ...current, candidate, status: 'IN_PROGRESS' as const, updatedAt: this.now().toISOString() };
       await repo.saveInterview(updated);
-      await repo.recordAiRequest({ id: this.id(), interviewId: current.id, provider, model, requestType: 'INTERPRET_OWNER_MESSAGE', occurredAt: this.now().toISOString(), succeeded: false, latencyMs, inputTokens: inputTokens || null, outputTokens: outputTokens || null, retryCount });
-    });
+      await repo.recordAiRequest({ id: this.id(), interviewId: current.id, provider, model, requestType: 'INTERPRET_OWNER_MESSAGE', occurredAt: this.now().toISOString(), succeeded: false, latencyMs, ...aiUsageTotals(attempts), attempts, routingOutcome });
+    }).catch(failure => { this.diagnose({ interviewId: interview.id, stage: 'PERSISTENCE', attempts }); throw failure; });
     if (code === 'AI_UNAVAILABLE') throw new DomainError('AI_UNAVAILABLE', 'AI is not configured. Your message is saved; edit the Project Brief manually or retry later.');
     if (code === 'AI_INVALID_OUTPUT') throw new DomainError('AI_INVALID_OUTPUT', 'The assistant returned unusable structured data. Your message is saved; retry or edit the brief manually.');
     throw new DomainError('AI_PROVIDER_FAILED', 'The assistant is temporarily unavailable. Your message is saved; retry or edit the brief manually.');
